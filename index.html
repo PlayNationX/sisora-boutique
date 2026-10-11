@@ -1,0 +1,2253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#fff8f6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SISORA">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<title>SISORA — Boutique</title>
+<style>
+:root {
+  --bg: #fff8f6;
+  --paper: #ffffff;
+  --ink: #35272d;
+  --muted: #86727a;
+  --line: #f0e2e6;
+  --accent: #c85f83;
+  --accent-soft: #fce8ef;
+  --accent-deep: #983b5c;
+  --gold: #b8860b;
+  --gold-soft: #fff6db;
+  --green: #237a57;
+  --green-soft: #e6f6ee;
+  --amber: #9c6516;
+  --amber-soft: #fff2db;
+  --red: #b9384f;
+  --red-soft: #ffe8ec;
+  --radius: 18px;
+  --shadow: 0 10px 30px rgba(85, 35, 55, 0.08);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+[data-theme="dark"] {
+  --bg: #171215;
+  --paper: #231b20;
+  --ink: #f8eef2;
+  --muted: #b09aa3;
+  --line: #362a31;
+  --accent-soft: #3d212d;
+  --gold-soft: #362b14;
+  --green-soft: #173328;
+  --amber-soft: #382812;
+  --red-soft: #3b1b22;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 15px; line-height: 1.45;
+  min-height: 100dvh;
+  overscroll-behavior-y: none;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; }
+input, select, textarea {
+  width: 100%; padding: 11px 13px;
+  border-radius: 12px; border: 1.5px solid var(--line);
+  background: var(--paper); color: var(--ink);
+  outline: none; transition: border-color .15s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+.app-shell {
+  max-width: 680px; margin: 0 auto;
+  min-height: 100dvh;
+  padding-bottom: calc(92px + var(--safe-bottom));
+}
+.topbar {
+  position: sticky; top: 0; z-index: 30;
+  padding: calc(12px + var(--safe-top)) 16px 12px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.brand-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.shop-logo {
+  width: 42px; height: 42px; border-radius: 13px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: #fff; font-weight: 800; font-size: 19px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(200,95,131,0.28);
+}
+.shop-logo img { width: 100%; height: 100%; object-fit: cover; }
+.brand-text h1 { margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -0.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-text p { margin: 0; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sync-pill {
+  font-size: 11px; font-weight: 700; padding: 5px 9px; border-radius: 99px;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--green-soft); color: var(--green);
+}
+.sync-pill.syncing { background: var(--amber-soft); color: var(--amber); }
+.sync-pill.offline { background: var(--red-soft); color: var(--red); }
+.acct-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 10px 4px 4px; border-radius: 99px;
+  background: var(--paper); border: 1px solid var(--line);
+  font-size: 12px; font-weight: 700;
+}
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--gold));
+  color: #fff; font-weight: 800; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  overflow: hidden; flex-shrink: 0;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar.lg { width: 54px; height: 54px; font-size: 21px; }
+.avatar.xl { width: 68px; height: 68px; font-size: 26px; }
+
+.container { padding: 14px 15px; display: flex; flex-direction: column; gap: 14px; }
+.card {
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 15px;
+  box-shadow: var(--shadow);
+}
+.hero-card {
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: #fff; border: 0; position: relative; overflow: hidden;
+}
+.hero-card h2 { margin: 0 0 4px; font-size: 20px; font-weight: 800; }
+.hero-card p { margin: 0; opacity: 0.9; font-size: 13px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.kpi-box {
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: 15px; padding: 12px 13px;
+}
+.kpi-label { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.kpi-val { font-size: 19px; font-weight: 800; margin-top: 3px; }
+.kpi-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 15px; border-radius: 12px; font-weight: 700; font-size: 13.5px;
+  transition: transform .1s, opacity .15s;
+}
+.btn:active { transform: scale(0.97); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-gold { background: linear-gradient(135deg, #c7911b, #9b6c08); color: #fff; }
+.btn-soft { background: var(--accent-soft); color: var(--accent-deep); }
+[data-theme="dark"] .btn-soft { color: #ff9ebb; }
+.btn-outline { background: var(--paper); border: 1.5px solid var(--line); color: var(--ink); }
+.btn-danger { background: var(--red-soft); color: var(--red); }
+.btn-sm { padding: 6px 11px; font-size: 12px; border-radius: 9px; }
+
+/* Blurred Product Tile Card */
+.prod-tile {
+  position: relative; overflow: hidden;
+  border-radius: var(--radius); border: 1px solid var(--line);
+  box-shadow: var(--shadow); background: var(--paper);
+}
+.prod-blur-bg {
+  position: absolute; inset: -18px;
+  background-size: cover; background-position: center;
+  filter: blur(22px) saturate(1.3) brightness(0.92);
+  transform: scale(1.12);
+  z-index: 0; opacity: 0.42;
+}
+[data-theme="dark"] .prod-blur-bg { filter: blur(22px) saturate(1.3) brightness(0.55); opacity: 0.55; }
+.prod-scrim {
+  position: relative; z-index: 1;
+  background: color-mix(in srgb, var(--paper) 74%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  padding: 13px;
+}
+.prod-row { display: flex; gap: 13px; align-items: flex-start; }
+.prod-thumb {
+  width: 84px; height: 102px; border-radius: 13px;
+  background: var(--accent-soft); overflow: hidden; flex-shrink: 0;
+  position: relative; display: flex; align-items: center; justify-content: center;
+  font-size: 28px; border: 1px solid rgba(255,255,255,0.4);
+  cursor: pointer;
+}
+.prod-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.photo-count-badge {
+  position: absolute; bottom: 5px; right: 5px;
+  background: rgba(0,0,0,0.68); color: #fff;
+  font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 99px;
+}
+.prod-info { flex: 1; min-width: 0; }
+.prod-title { font-weight: 800; font-size: 15.5px; margin: 0 0 3px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.prod-meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.pill {
+  font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px;
+  background: var(--accent-soft); color: var(--accent-deep);
+}
+[data-theme="dark"] .pill { color: #ff9ebb; }
+.pill.green { background: var(--green-soft); color: var(--green); }
+.pill.amber { background: var(--amber-soft); color: var(--amber); }
+.pill.red { background: var(--red-soft); color: var(--red); }
+.prod-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  flex-wrap: wrap;
+}
+
+/* Bottom Navigation Bar */
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 35;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--line);
+  padding: 6px 8px calc(6px + var(--safe-bottom));
+}
+.bottom-nav-inner {
+  max-width: 680px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px;
+}
+.nav-item {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 6px 2px; border-radius: 12px; color: var(--muted);
+  font-size: 10.5px; font-weight: 700; gap: 2px;
+}
+.nav-item .ico { font-size: 18px; line-height: 1.1; }
+.nav-item.active { color: var(--accent); background: var(--accent-soft); }
+
+/* Modals */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(20, 12, 16, 0.58);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.modal-sheet {
+  width: 100%; max-width: 640px; max-height: 92dvh;
+  background: var(--paper); border-radius: 24px 24px 0 0;
+  padding: 18px 18px calc(22px + var(--safe-bottom));
+  overflow-y: auto; box-shadow: 0 -10px 40px rgba(0,0,0,0.22);
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.modal-head h3 { margin: 0; font-size: 17px; font-weight: 800; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 5px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* Login Screen */
+.auth-screen {
+  min-height: 100dvh; display: flex; flex-direction: column;
+  justify-content: center; padding: calc(24px + var(--safe-top)) 18px calc(24px + var(--safe-bottom));
+  max-width: 480px; margin: 0 auto;
+}
+.acct-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border-radius: 18px;
+  background: var(--paper); border: 1.5px solid var(--line);
+  margin-bottom: 11px; text-align: left; width: 100%;
+  box-shadow: var(--shadow); transition: transform .12s, border-color .15s;
+}
+.acct-card:active { transform: scale(0.98); border-color: var(--accent); }
+.pin-dots { display: flex; justify-content: center; gap: 12px; margin: 16px 0; }
+.pin-dot {
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 2px solid var(--accent); background: transparent;
+}
+.pin-dot.filled { background: var(--accent); }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 290px; margin: 0 auto; }
+.key-btn {
+  height: 54px; border-radius: 15px; background: var(--bg);
+  border: 1px solid var(--line); font-size: 20px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.key-btn:active { background: var(--accent-soft); }
+
+/* Diagrams & Charts */
+.chart-bar-row { display: flex; align-items: flex-end; gap: 10px; height: 150px; padding: 12px 4px 4px; border-bottom: 1px solid var(--line); }
+.chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 4px; }
+.bar-pair { display: flex; align-items: flex-end; gap: 3px; width: 100%; justify-content: center; height: 115px; }
+.bar-v { width: 12px; border-radius: 4px 4px 0 0; min-height: 3px; }
+.donut-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.donut-ring { width: 116px; height: 116px; border-radius: 50%; position: relative; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.donut-hole { width: 70px; height: 70px; border-radius: 50%; background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; text-align: center; }
+.legend-list { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 6px; }
+.legend-item { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 7px; }
+
+.toast {
+  position: fixed; bottom: calc(84px + var(--safe-bottom)); left: 50%; transform: translateX(-50%);
+  background: #23181d; color: #fff; padding: 10px 18px; border-radius: 99px;
+  font-size: 13px; font-weight: 700; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  pointer-events: none; opacity: 0; transition: opacity .2s;
+}
+.toast.show { opacity: 1; }
+.ios-install-banner {
+  background: var(--gold-soft); border: 1px solid #e6c97a; color: #6e4e08;
+  border-radius: 14px; padding: 11px 13px; font-size: 12.5px; margin-top: 12px;
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modalRoot"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+// ============================================================================
+// SISORA iPhone iOS App (PWA) + Customer Temporary Link Viewer
+// Connected live to Firebase project: sisora-boutique
+// ============================================================================
+const FIREBASE_CFG = {
+  apiKey: "AIzaSyDgeINcFut3Aq7BR4nbI1gLRyH9ajdUvG8",
+  authDomain: "sisora-boutique.firebaseapp.com",
+  databaseURL: "https://sisora-boutique-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "sisora-boutique",
+  shopId: "sisora-boutique-main",
+  syncEmail: "sisoraboutique@sisora.app",
+  syncPass: "Sisora#Boutique2026!"
+};
+
+const FIXED_ACCOUNTS = [
+  { id: "admin", displayName: "Admin", subtitle: "Full Shop & Cloud Admin", defaultPin: "5603", isAdmin: true, emoji: "👑" },
+  { id: "vaheeda", displayName: "Vaheeda", subtitle: "Sister Partner · Boutique", defaultPin: "2515", isAdmin: false, emoji: "🌷" },
+  { id: "balkees", displayName: "Balkees", subtitle: "Sister Partner · Boutique", defaultPin: "8305", isAdmin: false, emoji: "🌸" }
+];
+
+const FIXED_SISTERS = [
+  { id: "vaheeda", name: "Vaheeda" },
+  { id: "balkees", name: "Balkees" }
+];
+
+const DEFAULT_SETTINGS = {
+  shopName: "SISORA Ethnic Wear",
+  brand: "SISORA",
+  tagline: "Vaheeda & Balkees Boutique",
+  greeting: "Hello, Vaheeda & Balkees! 🌷",
+  logo: "S",
+  logoAt: 0,
+  pins: { admin: "5603", vaheeda: "2515", balkees: "8305" },
+  profilePhotosAt: {},
+  currency: "INR",
+  defaultLow: 2,
+  theme: "light",
+  accent: "#c85f83",
+  compact: false,
+  privacy: false,
+  showHero: true,
+  showStats: true,
+  showQuick: true,
+  showLow: true,
+  categories: ["Kurti", "Kurti Set", "Salwar Suit", "Anarkali", "Lehenga", "Saree", "Abaya / Kaftan", "Dupatta / Stole", "Co-ord Set", "Gown / Party Wear", "Fabric / Unstitched", "Accessories"],
+  channels: ["Instagram", "WhatsApp", "Walk-in", "Reference", "Exhibition", "Reseller"],
+  payMethods: ["UPI / GPay", "Cash", "Bank transfer", "Card", "Other"],
+  expCats: ["Stock Purchase", "Packaging", "Courier / Shipping", "Stitching / Tailor", "Marketing / Ads", "Travel", "Rent / Utilities", "Other"],
+  sisters: FIXED_SISTERS,
+  _u: 0
+};
+
+// ---- Local Storage & IndexedDB Image Cache ----
+const LS_DB_KEY = "sisora_ios_db_v3";
+const LS_ACCT_KEY = "sisora_ios_acct_v3";
+const LS_OUTBOX_KEY = "sisora_ios_outbox_v3";
+
+let db = loadLocalDb();
+let currentAccount = loadLocalAccount();
+let activeTab = "home";
+let syncStatus = "offline"; // "live", "syncing", "offline"
+let idToken = "";
+let refreshToken = "";
+let imgMap = new Map(); // id -> { at, data }
+let outbox = new Set(JSON.parse(localStorage.getItem(LS_OUTBOX_KEY) || "[]"));
+
+// Filter states
+let stockQuery = "";
+let stockCategory = "All";
+let salesQuery = "";
+let salesFilter = "All";
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+function nowIso() {
+  return new Date().toISOString();
+}
+function money(n) {
+  const val = Number(n) || 0;
+  return "₹" + val.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+}
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
+}
+
+function loadLocalDb() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_DB_KEY) || "null");
+    if (raw && typeof raw === "object") {
+      return {
+        products: Array.isArray(raw.products) ? raw.products : [],
+        sales: Array.isArray(raw.sales) ? raw.sales : [],
+        expenses: Array.isArray(raw.expenses) ? raw.expenses : [],
+        customers: Array.isArray(raw.customers) ? raw.customers : [],
+        settlements: Array.isArray(raw.settlements) ? raw.settlements : [],
+        tombs: Array.isArray(raw.tombs) ? raw.tombs : [],
+        settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}), sisters: FIXED_SISTERS, pins: { ...DEFAULT_SETTINGS.pins, ...((raw.settings && raw.settings.pins) || {}) } }
+      };
+    }
+  } catch (e) {}
+  return {
+    products: [], sales: [], expenses: [], customers: [], settlements: [], tombs: [],
+    settings: { ...DEFAULT_SETTINGS }
+  };
+}
+
+function saveLocalDb() {
+  try {
+    localStorage.setItem(LS_DB_KEY, JSON.stringify(db));
+  } catch (e) {}
+  applyTheme();
+}
+
+function saveOutbox() {
+  try {
+    localStorage.setItem(LS_OUTBOX_KEY, JSON.stringify([...outbox]));
+  } catch (e) {}
+}
+
+function loadLocalAccount() {
+  try {
+    const a = JSON.parse(localStorage.getItem(LS_ACCT_KEY) || "null");
+    if (a && FIXED_ACCOUNTS.some((x) => x.id === a.id)) return a;
+  } catch (e) {}
+  return null;
+}
+
+function applyTheme() {
+  const s = db.settings || DEFAULT_SETTINGS;
+  document.documentElement.setAttribute("data-theme", s.theme === "dark" ? "dark" : "light");
+  if (s.accent) {
+    document.documentElement.style.setProperty("--accent", s.accent);
+  }
+}
+
+// ---- IndexedDB for Product & Profile Images ----
+function openImgDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("sisora_images_idb", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("imgs", { keyPath: "id" });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function loadAllImagesFromIdb() {
+  try {
+    const idb = await openImgDb();
+    return new Promise((resolve) => {
+      const tx = idb.transaction("imgs", "readonly");
+      const req = tx.objectStore("imgs").getAll();
+      req.onsuccess = () => {
+        (req.result || []).forEach((row) => {
+          if (row && row.id && row.data) imgMap.set(row.id, { at: row.at || 0, data: row.data });
+        });
+        resolve();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch (e) {}
+}
+
+async function putLocalImage(id, data, at = Date.now(), fromRemote = false) {
+  imgMap.set(id, { at, data });
+  try {
+    const idb = await openImgDb();
+    const tx = idb.transaction("imgs", "readwrite");
+    tx.objectStore("imgs").put({ id, at, data });
+  } catch (e) {}
+  if (!fromRemote) {
+    outbox.add("img/" + id);
+    saveOutbox();
+    pushOutboxToFirebase();
+  }
+}
+
+async function deleteLocalImage(id) {
+  imgMap.delete(id);
+  try {
+    const idb = await openImgDb();
+    const tx = idb.transaction("imgs", "readwrite");
+    tx.objectStore("imgs").delete(id);
+  } catch (e) {}
+}
+
+function compressImageFile(file, maxDim = 920, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(cv.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = ev.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ---- Firebase REST Client (100% compatible with Android APK CloudSyncClient.kt) ----
+async function ensureFirebaseAuth() {
+  if (idToken) return idToken;
+  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_CFG.apiKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: FIREBASE_CFG.syncEmail,
+      password: FIREBASE_CFG.syncPass,
+      returnSecureToken: true
+    })
+  });
+  if (!res.ok) throw new Error("Firebase Auth failed");
+  const data = await res.json();
+  idToken = data.idToken;
+  refreshToken = data.refreshToken || "";
+  return idToken;
+}
+
+async function fbGet(path) {
+  const token = await ensureFirebaseAuth();
+  const url = `${FIREBASE_CFG.databaseURL}/${path}.json?auth=${encodeURIComponent(token)}`;
+  const res = await fetch(url);
+  if (res.status === 401) {
+    idToken = "";
+    const retryToken = await ensureFirebaseAuth();
+    const res2 = await fetch(`${FIREBASE_CFG.databaseURL}/${path}.json?auth=${encodeURIComponent(retryToken)}`);
+    return res2.ok ? res2.json() : null;
+  }
+  return res.ok ? res.json() : null;
+}
+
+async function fbPut(path, payload) {
+  const token = await ensureFirebaseAuth();
+  const url = `${FIREBASE_CFG.databaseURL}/${path}.json?auth=${encodeURIComponent(token)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return res.ok ? res.json() : null;
+}
+
+const COLLECTIONS = ["products", "sales", "expenses", "customers", "settlements"];
+
+async function pullFromFirebase() {
+  try {
+    syncStatus = "syncing";
+    updateSyncPill();
+    const shopId = FIREBASE_CFG.shopId;
+    const [prodObj, salesObj, expObj, custObj, setObj, settingsObj] = await Promise.all([
+      fbGet(`shops/${shopId}/data/products`),
+      fbGet(`shops/${shopId}/data/sales`),
+      fbGet(`shops/${shopId}/data/expenses`),
+      fbGet(`shops/${shopId}/data/customers`),
+      fbGet(`shops/${shopId}/data/settlements`),
+      fbGet(`shops/${shopId}/data/settings`)
+    ]);
+
+    const colMap = { products: prodObj, sales: salesObj, expenses: expObj, customers: custObj, settlements: setObj };
+    let changed = false;
+
+    for (const col of COLLECTIONS) {
+      const remoteCol = colMap[col];
+      if (!remoteCol || typeof remoteCol !== "object") continue;
+      for (const [id, wrapper] of Object.entries(remoteCol)) {
+        if (!wrapper) continue;
+        const ru = Number(wrapper._u) || 0;
+        const idx = db[col].findIndex((x) => x.id === id);
+        const localItem = idx >= 0 ? db[col][idx] : null;
+        const tomb = db.tombs.find((t) => t.c === col && t.id === id);
+        const lu = localItem ? (Number(localItem._u) || 0) : (tomb ? (Number(tomb._u) || 0) : -1);
+
+        if (ru > lu) {
+          db.tombs = db.tombs.filter((t) => !(t.c === col && t.id === id));
+          if (wrapper.deleted) {
+            if (idx >= 0) db[col].splice(idx, 1);
+            db.tombs.push({ c: col, id, _u: ru });
+          } else if (wrapper.j) {
+            try {
+              const parsed = typeof wrapper.j === "string" ? JSON.parse(wrapper.j) : wrapper.j;
+              parsed._u = ru;
+              if (idx >= 0) db[col][idx] = parsed;
+              else db[col].unshift(parsed);
+            } catch (e) {}
+          }
+          outbox.delete(`${col}/${id}`);
+          changed = true;
+        }
+      }
+    }
+
+    if (settingsObj && settingsObj.j) {
+      const ru = Number(settingsObj._u) || 0;
+      const lu = Number(db.settings._u) || 0;
+      if (ru > lu) {
+        try {
+          const remoteSettings = typeof settingsObj.j === "string" ? JSON.parse(settingsObj.j) : settingsObj.j;
+          db.settings = {
+            ...db.settings,
+            ...remoteSettings,
+            sisters: FIXED_SISTERS,
+            pins: { ...DEFAULT_SETTINGS.pins, ...(db.settings.pins || {}), ...(remoteSettings.pins || {}) },
+            profilePhotosAt: { ...(db.settings.profilePhotosAt || {}), ...(remoteSettings.profilePhotosAt || {}) },
+            _u: ru
+          };
+          outbox.delete("settings");
+          changed = true;
+        } catch (e) {}
+      }
+    }
+
+    if (changed) {
+      saveLocalDb();
+      saveOutbox();
+      renderApp();
+    }
+
+    // Fetch any missing product or profile images
+    const neededImgs = new Set();
+    for (const p of db.products) {
+      const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
+      for (const pid of ids) {
+        const localIm = imgMap.get(pid);
+        if (!localIm || (p.imgAt && localIm.at < p.imgAt)) neededImgs.add(pid);
+      }
+    }
+    const profAt = db.settings.profilePhotosAt || {};
+    for (const acc of FIXED_ACCOUNTS) {
+      const ts = Number(profAt[acc.id]) || 0;
+      const imgId = "profile_" + acc.id;
+      const localIm = imgMap.get(imgId);
+      if (ts > 0 && (!localIm || localIm.at < ts)) neededImgs.add(imgId);
+    }
+    if (db.settings.logoAt && (!imgMap.get("logo") || imgMap.get("logo").at < db.settings.logoAt)) {
+      neededImgs.add("logo");
+    }
+
+    for (const imgId of neededImgs) {
+      try {
+        const imObj = await fbGet(`shops/${shopId}/data/images/${imgId}`);
+        if (imObj && imObj.data) {
+          await putLocalImage(imgId, imObj.data, imObj.at || Date.now(), true);
+        }
+      } catch (e) {}
+    }
+    if (neededImgs.size > 0) renderApp();
+
+    syncStatus = "live";
+    updateSyncPill();
+  } catch (e) {
+    syncStatus = "offline";
+    updateSyncPill();
+  }
+}
+
+async function pushOutboxToFirebase() {
+  if (outbox.size === 0) return;
+  try {
+    syncStatus = "syncing";
+    updateSyncPill();
+    const shopId = FIREBASE_CFG.shopId;
+    const keys = [...outbox];
+    for (const key of keys) {
+      if (key === "settings") {
+        const u = db.settings._u || Date.now();
+        await fbPut(`shops/${shopId}/data/settings`, { _u: u, j: JSON.stringify(db.settings) });
+        outbox.delete(key);
+      } else if (key.startsWith("img/")) {
+        const imgId = key.slice(4);
+        const im = imgMap.get(imgId);
+        if (im && im.data) {
+          await fbPut(`shops/${shopId}/data/images/${imgId}`, { at: im.at || Date.now(), data: im.data });
+        }
+        outbox.delete(key);
+      } else if (key.includes("/")) {
+        const [col, id] = key.split("/");
+        const item = (db[col] || []).find((x) => x.id === id);
+        const tomb = db.tombs.find((t) => t.c === col && t.id === id);
+        if (item) {
+          await fbPut(`shops/${shopId}/data/${col}/${id}`, { _u: item._u || Date.now(), j: JSON.stringify(item) });
+        } else if (tomb) {
+          await fbPut(`shops/${shopId}/data/${col}/${id}`, { _u: tomb._u || Date.now(), deleted: true });
+        }
+        outbox.delete(key);
+      }
+    }
+    saveOutbox();
+    syncStatus = "live";
+    updateSyncPill();
+  } catch (e) {
+    syncStatus = "offline";
+    updateSyncPill();
+  }
+}
+
+function updateSyncPill() {
+  const el = document.getElementById("syncPill");
+  if (!el) return;
+  if (syncStatus === "live") {
+    el.className = "sync-pill";
+    el.textContent = "● Live Sync";
+  } else if (syncStatus === "syncing") {
+    el.className = "sync-pill syncing";
+    el.textContent = "↻ Syncing…";
+  } else {
+    el.className = "sync-pill offline";
+    el.textContent = "○ Offline Ready";
+  }
+}
+
+// ============================================================================
+// MODE 1: Customer Temporary Showcase Page (?item=...)
+// ============================================================================
+async function renderCustomerShareMode(shareId) {
+  const root = document.getElementById("app");
+  root.innerHTML = `
+    <div class="auth-screen" style="text-align:center;">
+      <div class="card" style="padding:28px 20px;">
+        <div style="font-size:36px;margin-bottom:10px;">✨</div>
+        <h2 style="margin:0 0 6px;">Loading SISORA Showcase…</h2>
+        <p style="color:var(--muted);margin:0;">Fetching outfit photos & availability…</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const shopId = FIREBASE_CFG.shopId;
+    let shareData = await fbGet(`shops/${shopId}/data/shares/${shareId}`);
+    const prefix = shareId.split("-")[0];
+
+    // If share record wasn't written yet or needs full product fallback, match from products collection
+    const prodCol = await fbGet(`shops/${shopId}/data/products`);
+    let matchedProd = null;
+    if (prodCol && typeof prodCol === "object") {
+      for (const [pid, wrap] of Object.entries(prodCol)) {
+        if (!wrap || wrap.deleted || !wrap.j) continue;
+        const p = typeof wrap.j === "string" ? JSON.parse(wrap.j) : wrap.j;
+        if (pid === shareId || pid.endsWith(prefix) || (shareData && shareData.productId === pid)) {
+          matchedProd = p;
+          break;
+        }
+      }
+    }
+
+    if (!shareData && !matchedProd) {
+      root.innerHTML = `
+        <div class="auth-screen" style="text-align:center;">
+          <div class="card" style="padding:28px 20px;">
+            <div style="font-size:40px;margin-bottom:10px;">🌷</div>
+            <h2 style="margin:0 0 8px;">Showcase Link Not Found</h2>
+            <p style="color:var(--muted);margin:0;">This temporary product link may have expired or been removed by the boutique.</p>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const expiresAt = (shareData && shareData.expiresAt) ? Number(shareData.expiresAt) : (Date.now() + 48 * 3600000);
+    if (Date.now() > expiresAt) {
+      root.innerHTML = `
+        <div class="auth-screen" style="text-align:center;">
+          <div class="card" style="padding:28px 20px;">
+            <div style="font-size:42px;margin-bottom:10px;">⏳</div>
+            <h2 style="margin:0 0 8px;">Temporary Link Expired</h2>
+            <p style="color:var(--muted);margin:0;">This temporary showcase link from <b>SISORA Ethnic Wear</b> has expired. Please message us on WhatsApp for the latest availability!</p>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const name = (shareData && shareData.name && shareData.name !== "Test Share") ? shareData.name : (matchedProd ? matchedProd.name : "SISORA Outfit");
+    const code = (shareData && shareData.code) || (matchedProd && matchedProd.code) || "";
+    const category = (shareData && shareData.category) || (matchedProd && matchedProd.category) || "Boutique Collection";
+    const priceStr = (shareData && shareData.rawPrice) ? money(shareData.rawPrice) : (matchedProd ? money(matchedProd.price) : ((shareData && shareData.price) || ""));
+    const sizes = (shareData && shareData.availableSizes) || (matchedProd && matchedProd.variant) || "Free Size / Custom";
+    const colors = (shareData && shareData.availableColors) || (matchedProd && matchedProd.color) || "As Shown in Photos";
+    const inStock = matchedProd ? (Number(matchedProd.qty) > 0) : (shareData ? shareData.inStock !== false : true);
+    const qty = matchedProd ? Number(matchedProd.qty) : (shareData && shareData.qty ? Number(shareData.qty) : 1);
+    const notes = (shareData && shareData.notes) || (matchedProd && matchedProd.notes) || "";
+
+    let photoIds = [];
+    if (shareData && Array.isArray(shareData.photoIds) && shareData.photoIds.length) {
+      photoIds = shareData.photoIds;
+    } else if (matchedProd) {
+      photoIds = (Array.isArray(matchedProd.photoIds) && matchedProd.photoIds.length) ? matchedProd.photoIds : [matchedProd.id];
+    }
+
+    const photos = [];
+    for (const pid of photoIds) {
+      const im = await fbGet(`shops/${shopId}/data/images/${pid}`);
+      if (im && im.data) photos.push(im.data);
+    }
+
+    const hoursLeft = Math.max(1, Math.round((expiresAt - Date.now()) / 3600000));
+    const coverImg = photos[0] || "";
+    const waText = encodeURIComponent(`Hi SISORA! 💕 I'm interested in *${name}* ${code ? "(" + code + ")" : ""} priced at *${priceStr}*. Is it available?`);
+
+    window._showcasePhotos = photos;
+    window._selectShowcasePhoto = (idx) => {
+      const mainImg = document.getElementById("showcaseMainImg");
+      if (mainImg && photos[idx]) mainImg.src = photos[idx];
+    };
+
+    root.innerHTML = `
+      <div class="app-shell" style="padding-bottom:40px;">
+        <div class="topbar">
+          <div class="brand-row">
+            <div class="shop-logo">S</div>
+            <div class="brand-text">
+              <h1>SISORA Ethnic Wear</h1>
+              <p>Vaheeda & Balkees Boutique · Exclusive Preview</p>
+            </div>
+          </div>
+          <span class="pill amber">⏳ Valid ${hoursLeft}h</span>
+        </div>
+
+        <div class="container">
+          <div class="prod-tile">
+            ${coverImg ? `<div class="prod-blur-bg" style="background-image:url('${coverImg}')"></div>` : ""}
+            <div class="prod-scrim" style="padding:16px;">
+              ${coverImg ? `
+                <div style="border-radius:16px;overflow:hidden;max-height:440px;background:#0001;display:flex;align-items:center;justify-content:center;margin-bottom:12px;">
+                  <img id="showcaseMainImg" src="${coverImg}" style="width:100%;max-height:440px;object-fit:cover;cursor:pointer;" onclick="openLightbox(window._showcasePhotos, 0)">
+                </div>
+              ` : `
+                <div style="height:220px;border-radius:16px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:64px;margin-bottom:12px;">👗</div>
+              `}
+
+              ${photos.length > 1 ? `
+                <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:10px;">
+                  ${photos.map((src, i) => `
+                    <img src="${src}" onclick="window._selectShowcasePhoto(${i})" style="width:64px;height:76px;object-fit:cover;border-radius:10px;border:2px solid var(--accent);cursor:pointer;flex-shrink:0;">
+                  `).join("")}
+                </div>
+              ` : ""}
+
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+                <div>
+                  <span class="pill">${esc(category)}</span>
+                  ${code ? `<span class="pill" style="margin-left:4px;">Code: ${esc(code)}</span>` : ""}
+                  <h2 style="margin:8px 0 4px;font-size:22px;font-weight:800;">${esc(name)}</h2>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-size:24px;font-weight:900;color:var(--accent);">${esc(priceStr)}</div>
+                  <span class="pill ${inStock ? 'green' : 'red'}">${inStock ? `✅ Ready to Ship (${qty} left)` : "⏳ Pre-order / Sold Out"}</span>
+                </div>
+              </div>
+
+              <div class="card" style="margin-top:14px;background:color-mix(in srgb, var(--bg) 80%, transparent);">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                  <div>
+                    <div style="font-size:11.5px;color:var(--muted);font-weight:700;">🎨 AVAILABLE COLOURS</div>
+                    <div style="font-size:14.5px;font-weight:800;margin-top:3px;">${esc(colors)}</div>
+                  </div>
+                  <div>
+                    <div style="font-size:11.5px;color:var(--muted);font-weight:700;">📏 AVAILABLE SIZES</div>
+                    <div style="font-size:14.5px;font-weight:800;margin-top:3px;">${esc(sizes)}</div>
+                  </div>
+                </div>
+                ${notes ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);">${esc(notes)}</div>` : ""}
+              </div>
+
+              <a href="https://wa.me/?text=${waText}" target="_blank" class="btn btn-primary" style="width:100%;margin-top:14px;padding:14px;font-size:15px;text-decoration:none;">
+                💬 Book / Enquire on WhatsApp
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    root.innerHTML = `
+      <div class="auth-screen" style="text-align:center;">
+        <div class="card" style="padding:28px 20px;">
+          <h2>Unable to load showcase</h2>
+          <p style="color:var(--muted);">${esc(err.message)}</p>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// ============================================================================
+// MODE 2: Full Sister & Admin iPhone iOS App (PWA)
+// ============================================================================
+function getAccountAvatarHtml(accId, sizeClass = "") {
+  const acc = FIXED_ACCOUNTS.find((a) => a.id === accId) || FIXED_ACCOUNTS[0];
+  const im = imgMap.get("profile_" + acc.id);
+  if (im && im.data) {
+    return `<div class="avatar ${sizeClass}"><img src="${im.data}" alt="${esc(acc.displayName)}"></div>`;
+  }
+  return `<div class="avatar ${sizeClass}">${esc(acc.displayName[0])}</div>`;
+}
+
+function renderLoginScreen() {
+  const root = document.getElementById("app");
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  const logoIm = imgMap.get("logo");
+
+  root.innerHTML = `
+    <div class="auth-screen">
+      <div style="text-align:center;margin-bottom:22px;">
+        <div class="shop-logo" style="width:68px;height:68px;border-radius:20px;font-size:28px;margin:0 auto 12px;">
+          ${logoIm && logoIm.data ? `<img src="${logoIm.data}">` : esc(db.settings.logo || "S")}
+        </div>
+        <h1 style="margin:0;font-size:24px;font-weight:900;">${esc(db.settings.shopName)}</h1>
+        <p style="margin:4px 0 0;color:var(--muted);font-size:13.5px;">${esc(db.settings.tagline)} · Choose your account</p>
+      </div>
+
+      ${FIXED_ACCOUNTS.map((acc) => `
+        <button class="acct-card" onclick="openPinModal('${acc.id}')">
+          ${getAccountAvatarHtml(acc.id, "lg")}
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:16.5px;font-weight:800;display:flex;align-items:center;gap:6px;">
+              ${esc(acc.displayName)} <span>${acc.emoji}</span>
+            </div>
+            <div style="font-size:12.5px;color:var(--muted);margin-top:2px;">${esc(acc.subtitle)}</div>
+          </div>
+          <span class="pill">🔐 PIN</span>
+        </button>
+      `).join("")}
+
+      ${!isStandalone ? `
+        <div class="ios-install-banner">
+          <b>📲 Install on your iPhone Home Screen:</b><br>
+          Tap Safari's <b>Share</b> button <span style="font-size:15px;">⍗</span> at the bottom, then tap <b>"Add to Home Screen"</b> for the full-screen native iPhone app experience!
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+let pinEntryAcc = null;
+let pinBuffer = "";
+
+window.openPinModal = function(accId) {
+  pinEntryAcc = FIXED_ACCOUNTS.find((a) => a.id === accId);
+  pinBuffer = "";
+  renderPinModal();
+};
+
+function renderPinModal() {
+  if (!pinEntryAcc) return;
+  const modalRoot = document.getElementById("modalRoot");
+  const dots = [0, 1, 2, 3].map((i) => `<div class="pin-dot ${pinBuffer.length > i ? 'filled' : ''}"></div>`).join("");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet" style="text-align:center;">
+        <div style="margin-bottom:8px;">${getAccountAvatarHtml(pinEntryAcc.id, "xl")}</div>
+        <h3 style="margin:6px 0 2px;font-size:19px;">Hi, ${esc(pinEntryAcc.displayName)} ${pinEntryAcc.emoji}</h3>
+        <p style="margin:0;color:var(--muted);font-size:13px;">Enter your 4-digit PIN code to unlock</p>
+        <div class="pin-dots">${dots}</div>
+        <div class="keypad">
+          ${[1,2,3,4,5,6,7,8,9].map((n) => `<button class="key-btn" onclick="pressPinDigit('${n}')">${n}</button>`).join("")}
+          <button class="key-btn" style="font-size:13px;color:var(--muted);" onclick="closeModal()">Cancel</button>
+          <button class="key-btn" onclick="pressPinDigit('0')">0</button>
+          <button class="key-btn" onclick="pressPinBack()">⌫</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.pressPinDigit = function(d) {
+  if (pinBuffer.length >= 6) return;
+  pinBuffer += d;
+  renderPinModal();
+  const expected = String((db.settings.pins && db.settings.pins[pinEntryAcc.id]) || pinEntryAcc.defaultPin);
+  if (pinBuffer === expected) {
+    currentAccount = pinEntryAcc;
+    localStorage.setItem(LS_ACCT_KEY, JSON.stringify(currentAccount));
+    closeModal();
+    showToast(`Welcome, ${currentAccount.displayName}! ${currentAccount.emoji}`);
+    renderApp();
+    pullFromFirebase();
+  } else if (pinBuffer.length >= expected.length) {
+    setTimeout(() => {
+      showToast("Incorrect PIN for " + pinEntryAcc.displayName);
+      pinBuffer = "";
+      renderPinModal();
+    }, 180);
+  }
+};
+
+window.pressPinBack = function() {
+  pinBuffer = pinBuffer.slice(0, -1);
+  renderPinModal();
+};
+
+window.closeModal = function() {
+  document.getElementById("modalRoot").innerHTML = "";
+};
+
+window.signOutAccount = function() {
+  currentAccount = null;
+  localStorage.removeItem(LS_ACCT_KEY);
+  showToast("Locked 🔒");
+  renderApp();
+};
+
+window.switchTab = function(tab) {
+  activeTab = tab;
+  renderApp();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+// ---- Main App Renderer ----
+function renderApp() {
+  applyTheme();
+  if (!currentAccount) {
+    renderLoginScreen();
+    return;
+  }
+  const root = document.getElementById("app");
+  const logoIm = imgMap.get("logo");
+  root.innerHTML = `
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-row">
+          <div class="shop-logo">
+            ${logoIm && logoIm.data ? `<img src="${logoIm.data}">` : esc(db.settings.logo || "S")}
+          </div>
+          <div class="brand-text">
+            <h1>${esc(db.settings.shopName)}</h1>
+            <p>${esc(db.settings.tagline)}</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span id="syncPill" class="sync-pill" onclick="pullFromFirebase()">● Live Sync</span>
+          <button class="acct-chip" onclick="signOutAccount()" title="Tap to lock / switch account">
+            ${getAccountAvatarHtml(currentAccount.id)}
+            <span>${esc(currentAccount.displayName)}</span>
+            <span style="opacity:0.6;">🔒</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="container">
+        ${renderActiveTabContent()}
+      </main>
+
+      <nav class="bottom-nav">
+        <div class="bottom-nav-inner">
+          ${[
+            ["home", "🏠", "Home"],
+            ["stock", "👗", "Stock"],
+            ["sales", "🛍️", "Sales"],
+            ["reports", "📊", "Reports"],
+            ["money", "💝", "Money"],
+            ["more", "⚙️", "Settings"]
+          ].map(([id, ico, label]) => `
+            <button class="nav-item ${activeTab === id ? 'active' : ''}" onclick="switchTab('${id}')">
+              <span class="ico">${ico}</span>
+              <span>${label}</span>
+            </button>
+          `).join("")}
+        </div>
+      </nav>
+    </div>
+  `;
+  updateSyncPill();
+}
+
+function computeTotals() {
+  let revenue = 0, cogs = 0, received = 0, due = 0;
+  for (const s of db.sales) {
+    const retRefund = (s.returns || []).reduce((a, r) => a + (Number(r.refund) || 0), 0);
+    const retRestock = (s.returns || []).reduce((a, r) => a + (Number(r.restock) || 0), 0);
+    const netTot = Math.max(0, (Number(s.total) || 0) - retRefund);
+    const paid = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+    revenue += netTot;
+    cogs += (Number(s.costAtSale) || 0) * Math.max(0, (Number(s.qty) || 1) - retRestock);
+    received += paid;
+    due += Math.max(0, netTot - paid);
+  }
+  const expenses = db.expenses
+    .filter((e) => e.category !== "Capital Contribution" && e.category !== "Partner Withdrawal")
+    .reduce((a, e) => a + (Number(e.amount) || 0), 0);
+  const stockUnits = db.products.reduce((a, p) => a + Math.max(0, Number(p.qty) || 0), 0);
+  const stockCost = db.products.reduce((a, p) => a + Math.max(0, Number(p.qty) || 0) * (Number(p.cost) || 0), 0);
+  const stockRetail = db.products.reduce((a, p) => a + Math.max(0, Number(p.qty) || 0) * (Number(p.price) || 0), 0);
+  const netProfit = revenue - cogs - expenses;
+  return { revenue, cogs, received, due, expenses, stockUnits, stockCost, stockRetail, netProfit };
+}
+
+function renderProductCardHtml(p) {
+  const photoIds = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
+  const coverId = photoIds[0] || p.id;
+  const coverIm = imgMap.get(coverId);
+  const coverUrl = coverIm ? coverIm.data : "";
+  const qty = Number(p.qty) || 0;
+  const low = Number(p.low) || 2;
+  const hidePriv = db.settings.privacy;
+
+  return `
+    <div class="prod-tile">
+      ${coverUrl ? `<div class="prod-blur-bg" style="background-image:url('${coverUrl}')"></div>` : ""}
+      <div class="prod-scrim">
+        <div class="prod-row">
+          <div class="prod-thumb" onclick="openProductGallery('${p.id}')">
+            ${coverUrl ? `<img src="${coverUrl}" alt="${esc(p.name)}">` : "👗"}
+            ${photoIds.length > 1 ? `<span class="photo-count-badge">📷 ${photoIds.length}</span>` : ""}
+          </div>
+          <div class="prod-info">
+            <div class="prod-title">
+              <span>${esc(p.name)}</span>
+              <span style="color:var(--accent);font-size:16px;">${money(p.price)}</span>
+            </div>
+            <div class="prod-meta">
+              ${p.code ? `<b>${esc(p.code)}</b> · ` : ""}${esc(p.category || "Kurti")}
+              ${!hidePriv ? ` · Cost: ${money(p.cost)}` : ""}
+            </div>
+            <div class="pill-row">
+              ${p.variant ? `<span class="pill">📏 ${esc(p.variant)}</span>` : ""}
+              ${p.color ? `<span class="pill">🎨 ${esc(p.color)}</span>` : ""}
+              <span class="pill ${qty <= 0 ? 'red' : (qty <= low ? 'amber' : 'green')}">
+                ${qty <= 0 ? "Sold out" : `${qty} in stock`}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="prod-actions">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button class="btn btn-outline btn-sm" onclick="adjustProductQty('${p.id}', -1)">−</button>
+            <span style="font-weight:800;font-size:13px;min-width:22px;text-align:center;">${qty}</span>
+            <button class="btn btn-outline btn-sm" onclick="adjustProductQty('${p.id}', 1)">+</button>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-gold btn-sm" onclick="openSendToCustomerModal('${p.id}')">📤 Send to Customer</button>
+            <button class="btn btn-soft btn-sm" onclick="openProductModal('${p.id}')">✏️ Edit</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderActiveTabContent() {
+  if (activeTab === "home") return renderHomeTab();
+  if (activeTab === "stock") return renderStockTab();
+  if (activeTab === "sales") return renderSalesTab();
+  if (activeTab === "reports") return renderReportsTab();
+  if (activeTab === "money") return renderMoneyTab();
+  return renderMoreSettingsTab();
+}
+
+function renderHomeTab() {
+  const t = computeTotals();
+  const hidePriv = db.settings.privacy;
+  const lowItems = db.products.filter((p) => (Number(p.qty) || 0) <= (Number(p.low) || 2));
+
+  return `
+    ${db.settings.showHero !== false ? `
+      <div class="card hero-card">
+        <h2>${esc(db.settings.greeting || "Hello, Vaheeda & Balkees! 🌷")}</h2>
+        <p>Signed in as <b>${esc(currentAccount.displayName)}</b> · Real-time synced with Android & iPhone</p>
+      </div>
+    ` : ""}
+
+    ${db.settings.showQuick !== false ? `
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:9px;">
+        <button class="btn btn-primary" onclick="openProductModal()">＋ Add Dress / Stock</button>
+        <button class="btn btn-gold" onclick="openSaleModal()">🛍️ Record Sale</button>
+      </div>
+    ` : ""}
+
+    ${db.settings.showStats !== false ? `
+      <div class="kpi-grid">
+        <div class="kpi-box">
+          <div class="kpi-label">TOTAL SALES</div>
+          <div class="kpi-val">${money(t.revenue)}</div>
+          <div class="kpi-sub">${db.sales.length} orders · ${money(t.due)} due</div>
+        </div>
+        <div class="kpi-box">
+          <div class="kpi-label">NET PROFIT</div>
+          <div class="kpi-val" style="color:var(--green);">${hidePriv ? "••••" : money(t.netProfit)}</div>
+          <div class="kpi-sub">Expenses: ${money(t.expenses)}</div>
+        </div>
+        <div class="kpi-box">
+          <div class="kpi-label">STOCK IN HAND</div>
+          <div class="kpi-val">${t.stockUnits} pcs</div>
+          <div class="kpi-sub">${db.products.length} designs</div>
+        </div>
+        <div class="kpi-box">
+          <div class="kpi-label">STOCK VALUE</div>
+          <div class="kpi-val">${hidePriv ? "••••" : money(t.stockRetail)}</div>
+          <div class="kpi-sub">${hidePriv ? "" : "Cost: " + money(t.stockCost)}</div>
+        </div>
+      </div>
+    ` : ""}
+
+    ${db.settings.showLow !== false && lowItems.length > 0 ? `
+      <div class="card">
+        <div style="font-weight:800;margin-bottom:8px;">⚠️ Low / Out of Stock (${lowItems.length})</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${lowItems.slice(0, 6).map((p) => `<span class="pill ${p.qty <= 0 ? 'red' : 'amber'}" onclick="openProductModal('${p.id}')">${esc(p.name)} (${p.qty})</span>`).join("")}
+        </div>
+      </div>
+    ` : ""}
+
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <h3 style="margin:0;font-size:16px;">✨ Latest Collection (${db.products.length})</h3>
+      <button class="btn btn-soft btn-sm" onclick="switchTab('stock')">View All →</button>
+    </div>
+    ${db.products.length === 0 ? `
+      <div class="card" style="text-align:center;padding:28px;">
+        <div style="font-size:36px;">👗</div>
+        <p style="color:var(--muted);margin:8px 0 12px;">No dresses in stock yet. Add your first outfit!</p>
+        <button class="btn btn-primary" onclick="openProductModal()">＋ Add First Outfit</button>
+      </div>
+    ` : db.products.slice(0, 5).map(renderProductCardHtml).join("")}
+  `;
+}
+
+function renderStockTab() {
+  const cats = ["All", ...(db.settings.categories || DEFAULT_SETTINGS.categories)];
+  const filtered = db.products.filter((p) => {
+    const q = stockQuery.trim().toLowerCase();
+    const matchQ = !q || [p.name, p.code, p.category, p.color, p.variant].some((v) => String(v || "").toLowerCase().includes(q));
+    const matchCat = stockCategory === "All" || p.category === stockCategory;
+    return matchQ && matchCat;
+  });
+
+  return `
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input type="search" placeholder="🔍 Search name, code, colour, size…" value="${esc(stockQuery)}" oninput="window.setStockQuery(this.value)">
+      <button class="btn btn-primary" style="flex-shrink:0;" onclick="openProductModal()">＋ Add</button>
+    </div>
+    <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+      ${cats.map((c) => `<button class="btn btn-sm ${stockCategory === c ? 'btn-primary' : 'btn-outline'}" style="flex-shrink:0;" onclick="window.setStockCat('${esc(c)}')">${esc(c)}</button>`).join("")}
+    </div>
+    ${filtered.length === 0 ? `<div class="card" style="text-align:center;color:var(--muted);">No matching outfits found.</div>` : filtered.map(renderProductCardHtml).join("")}
+  `;
+}
+window.setStockQuery = (v) => { stockQuery = v; renderApp(); };
+window.setStockCat = (c) => { stockCategory = c; renderApp(); };
+
+function renderSalesTab() {
+  const statuses = ["All", "ordered", "packed", "shipped", "delivered"];
+  const filtered = db.sales.filter((s) => {
+    const q = salesQuery.trim().toLowerCase();
+    const matchQ = !q || [s.productName, s.customer, s.channel, s.tracking].some((v) => String(v || "").toLowerCase().includes(q));
+    const matchSt = salesFilter === "All" || s.status === salesFilter;
+    return matchQ && matchSt;
+  });
+
+  return `
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input type="search" placeholder="🔍 Search customer, outfit, channel…" value="${esc(salesQuery)}" oninput="window.setSalesQuery(this.value)">
+      <button class="btn btn-gold" style="flex-shrink:0;" onclick="openSaleModal()">＋ Sale</button>
+    </div>
+    <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+      ${statuses.map((st) => `<button class="btn btn-sm ${salesFilter === st ? 'btn-primary' : 'btn-outline'}" onclick="window.setSalesFilter('${st}')">${st.toUpperCase()}</button>`).join("")}
+    </div>
+    ${filtered.length === 0 ? `<div class="card" style="text-align:center;color:var(--muted);">No sales recorded yet.</div>` : filtered.map((s) => {
+      const paid = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+      const bal = Math.max(0, (Number(s.total) || 0) - paid);
+      return `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div>
+              <div style="font-weight:800;font-size:15px;">${esc(s.productName)} × ${s.qty}</div>
+              <div style="font-size:12px;color:var(--muted);">${esc(s.date)} · 👤 ${esc(s.customer || "Walk-in")} · via ${esc(s.channel || "Instagram")}</div>
+              <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">Sold by: <b>${esc(s.seller === "balkees" ? "Balkees" : (s.seller === "both" ? "Both Sisters" : "Vaheeda"))}</b></div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-weight:800;font-size:16px;color:var(--accent);">${money(s.total)}</div>
+              <span class="pill ${bal > 0 ? 'amber' : 'green'}">${bal > 0 ? `Due ${money(bal)}` : "Paid ✓"}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:space-between;align-items:center;">
+            <select style="width:auto;padding:5px 10px;font-size:12px;" onchange="updateSaleStatus('${s.id}', this.value)">
+              ${["ordered", "packed", "shipped", "delivered"].map((st) => `<option value="${st}" ${s.status === st ? 'selected' : ''}>Status: ${st.toUpperCase()}</option>`).join("")}
+            </select>
+            <div style="display:flex;gap:6px;">
+              ${bal > 0 ? `<button class="btn btn-soft btn-sm" onclick="markSalePaid('${s.id}')">✓ Mark Paid</button>` : ""}
+              <button class="btn btn-danger btn-sm" onclick="deleteSaleItem('${s.id}')">🗑</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+window.setSalesQuery = (v) => { salesQuery = v; renderApp(); };
+window.setSalesFilter = (st) => { salesFilter = st; renderApp(); };
+
+// ---- Reports & Diagrams Page (8 Visual Diagrams) ----
+function renderReportsTab() {
+  const t = computeTotals();
+  const palette = ["#c85f83", "#b8860b", "#237a57", "#5b4b8a", "#d96b27", "#2b7a9b"];
+
+  // 1. Sister Contributions (Vaheeda vs Balkees)
+  function sisterStats(sisId) {
+    const capIn = db.expenses.filter((e) => e.paidBy === sisId && e.category === "Capital Contribution").reduce((a, e) => a + (Number(e.amount) || 0), 0);
+    const expPaid = db.expenses.filter((e) => e.paidBy === sisId && e.category !== "Capital Contribution" && e.category !== "Partner Withdrawal").reduce((a, e) => a + (Number(e.amount) || 0), 0);
+    const withdrawn = db.expenses.filter((e) => e.paidBy === sisId && e.category === "Partner Withdrawal").reduce((a, e) => a + (Number(e.amount) || 0), 0);
+    const salesBy = db.sales.filter((s) => s.seller === sisId).reduce((a, s) => a + (Number(s.total) || 0), 0);
+    const stockOwned = db.products.filter((p) => p.owner === sisId).reduce((a, p) => a + (Number(p.cost) || 0) * Math.max(0, Number(p.qty) || 0), 0);
+    const netContrib = capIn + expPaid + stockOwned - withdrawn;
+    return { capIn, expPaid, withdrawn, salesBy, stockOwned, netContrib };
+  }
+  const vah = sisterStats("vaheeda");
+  const bal = sisterStats("balkees");
+  const totContrib = Math.max(1, vah.netContrib + bal.netContrib);
+  const vahPct = Math.round((vah.netContrib / totContrib) * 100);
+
+  // 2. Sales by Source / Channel
+  const chanMap = {};
+  db.sales.forEach((s) => { const ch = s.channel || "Instagram"; chanMap[ch] = (chanMap[ch] || 0) + (Number(s.total) || 0); });
+  const chanEntries = Object.entries(chanMap).sort((a, b) => b[1] - a[1]);
+
+  // 3. Payment Modes
+  const payMap = {};
+  db.sales.forEach((s) => {
+    const paid = (s.pays || []).reduce((a, p) => {
+      const m = p.method || "UPI / GPay";
+      payMap[m] = (payMap[m] || 0) + (Number(p.amount) || 0);
+      return a + (Number(p.amount) || 0);
+    }, 0);
+    const due = Math.max(0, (Number(s.total) || 0) - paid);
+    if (due > 0) payMap["Pending Due"] = (payMap["Pending Due"] || 0) + due;
+  });
+  const payEntries = Object.entries(payMap).sort((a, b) => b[1] - a[1]);
+
+  // 4. Expenses by Category
+  const expMap = {};
+  db.expenses.forEach((e) => { const c = e.category || "Other"; expMap[c] = (expMap[c] || 0) + (Number(e.amount) || 0); });
+  const expEntries = Object.entries(expMap).sort((a, b) => b[1] - a[1]);
+
+  // 5. Stock Value by Dress Category
+  const catStockMap = {};
+  db.products.forEach((p) => { const c = p.category || "Kurti"; catStockMap[c] = (catStockMap[c] || 0) + Math.max(0, Number(p.qty) || 0) * (Number(p.price) || 0); });
+  const catStockEntries = Object.entries(catStockMap).sort((a, b) => b[1] - a[1]);
+
+  // Helper for Donut HTML
+  function buildDonutHtml(entries, centerLabel) {
+    const total = entries.reduce((a, x) => a + x[1], 0);
+    if (total <= 0) return `<p style="color:var(--muted);font-size:13px;margin:0;">No data recorded yet.</p>`;
+    let accDeg = 0;
+    const stops = entries.map(([k, v], i) => {
+      const deg = (v / total) * 360;
+      const start = accDeg;
+      accDeg += deg;
+      return `${palette[i % palette.length]} ${start.toFixed(1)}deg ${accDeg.toFixed(1)}deg`;
+    }).join(", ");
+    return `
+      <div class="donut-wrap">
+        <div class="donut-ring" style="background:conic-gradient(${stops});">
+          <div class="donut-hole">
+            <span style="color:var(--muted);font-size:9.5px;">${esc(centerLabel)}</span>
+            <span>${money(total)}</span>
+          </div>
+        </div>
+        <div class="legend-list">
+          ${entries.map(([k, v], i) => `
+            <div class="legend-item">
+              <span><span class="legend-dot" style="background:${palette[i % palette.length]}"></span>${esc(k)}</span>
+              <b>${money(v)} (${Math.round((v / total) * 100)}%)</b>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="card">
+      <h3 style="margin:0 0 10px;">👭 Vaheeda vs Balkees Contributions & Sales</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+        <div class="kpi-box">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            ${getAccountAvatarHtml("vaheeda")}
+            <b>Vaheeda</b>
+          </div>
+          <div style="font-size:12px;color:var(--muted);">Net Contribution: <b>${money(vah.netContrib)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">Expenses Paid: <b>${money(vah.expPaid)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">Sales Closed: <b>${money(vah.salesBy)}</b></div>
+        </div>
+        <div class="kpi-box">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            ${getAccountAvatarHtml("balkees")}
+            <b>Balkees</b>
+          </div>
+          <div style="font-size:12px;color:var(--muted);">Net Contribution: <b>${money(bal.netContrib)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">Expenses Paid: <b>${money(bal.expPaid)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">Sales Closed: <b>${money(bal.salesBy)}</b></div>
+        </div>
+      </div>
+      <div style="height:12px;border-radius:99px;background:var(--line);overflow:hidden;display:flex;">
+        <div style="width:${vahPct}%;background:#c85f83;"></div>
+        <div style="width:${100 - vahPct}%;background:#b8860b;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted);margin-top:4px;">
+        <span>Vaheeda (${vahPct}%)</span>
+        <span>Balkees (${100 - vahPct}%)</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px;">📱 Sales by Source / Channel</h3>
+      ${buildDonutHtml(chanEntries, "SALES")}
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px;">💳 Payment Modes Breakdown</h3>
+      ${buildDonutHtml(payEntries, "PAYMENTS")}
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px;">🧾 Expenses Breakdown by Category</h3>
+      ${buildDonutHtml(expEntries, "EXPENSES")}
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 12px;">👗 Inventory Value by Dress Category</h3>
+      ${catStockEntries.length === 0 ? `<p style="color:var(--muted);margin:0;">No stock items yet.</p>` : catStockEntries.map(([cat, val], i) => {
+        const maxVal = Math.max(1, catStockEntries[0][1]);
+        const pct = Math.round((val / maxVal) * 100);
+        return `
+          <div style="margin-bottom:9px;">
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px;">
+              <span><b>${esc(cat)}</b></span>
+              <span>${money(val)}</span>
+            </div>
+            <div style="height:8px;border-radius:99px;background:var(--line);overflow:hidden;">
+              <div style="width:${pct}%;height:100%;background:${palette[i % palette.length]};"></div>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+// ---- Money (Expenses & Contributions) Tab ----
+function renderMoneyTab() {
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;">
+      <button class="btn btn-primary" onclick="openExpenseModal('expense')">＋ Add Expense</button>
+      <button class="btn btn-gold" onclick="openExpenseModal('capital')">💰 Add Contribution</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px;">📒 Recent Expenses & Contributions (${db.expenses.length})</h3>
+      ${db.expenses.length === 0 ? `<p style="color:var(--muted);margin:0;">No expenses or capital entries yet.</p>` : db.expenses.map((e) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);">
+          <div>
+            <div style="font-weight:700;">${esc(e.title)}</div>
+            <div style="font-size:12px;color:var(--muted);">${esc(e.date)} · ${esc(e.category)} · by <b>${esc(e.paidBy === "balkees" ? "Balkees" : "Vaheeda")}</b></div>
+          </div>
+          <div style="font-weight:800;color:var(--accent);">${money(e.amount)}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+// ---- Role-Based Settings Tab (Admin vs Sisters Vaheeda & Balkees) ----
+function renderMoreSettingsTab() {
+  const isAdmin = currentAccount && currentAccount.isAdmin;
+  const s = db.settings;
+
+  return `
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;">
+        ${getAccountAvatarHtml(currentAccount.id, "xl")}
+        <div style="flex:1;">
+          <div style="font-size:18px;font-weight:800;">${esc(currentAccount.displayName)} ${currentAccount.emoji}</div>
+          <div style="font-size:12.5px;color:var(--muted);">${isAdmin ? "Full Administrator Access" : "Sister Partner · Application Settings"}</div>
+          <label class="btn btn-soft btn-sm" style="margin-top:8px;display:inline-flex;">
+            📸 Change My Profile Photo
+            <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${currentAccount.id}', this.files[0])">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px;">🔐 Change My PIN (${esc(currentAccount.displayName)} Only)</h3>
+      <div class="field-row">
+        <div class="field">
+          <label>Current PIN</label>
+          <input type="password" id="curPinInput" inputmode="numeric" placeholder="Current PIN">
+        </div>
+        <div class="field">
+          <label>New 4-Digit PIN</label>
+          <input type="password" id="newPinInput" inputmode="numeric" placeholder="New PIN">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="changeMyOwnPin()">Update My PIN</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px;">🎨 Look & Feel (Application Settings)</h3>
+      <div class="field-row">
+        <div class="field">
+          <label>Theme</label>
+          <select onchange="updateSettingField('theme', this.value)">
+            <option value="light" ${s.theme !== 'dark' ? 'selected' : ''}>☀️ Light Ivory</option>
+            <option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>🌙 Luxury Dark</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Accent Colour</label>
+          <select onchange="updateSettingField('accent', this.value)">
+            <option value="#c85f83" ${s.accent === '#c85f83' ? 'selected' : ''}>🌷 Boutique Rose</option>
+            <option value="#b8860b" ${s.accent === '#b8860b' ? 'selected' : ''}>✨ Royal Gold</option>
+            <option value="#237a57" ${s.accent === '#237a57' ? 'selected' : ''}>🌿 Emerald</option>
+            <option value="#5b4b8a" ${s.accent === '#5b4b8a' ? 'selected' : ''}>👑 Velvet Plum</option>
+          </select>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;font-weight:700;margin-top:6px;">
+        <input type="checkbox" style="width:20px;height:20px;" ${s.privacy ? 'checked' : ''} onchange="updateSettingField('privacy', this.checked)">
+        🙈 Hide Cost & Profit on Home / Stock screens
+      </label>
+    </div>
+
+    ${isAdmin ? `
+      <div class="card">
+        <h3 style="margin:0 0 10px;">👭 Sisters Profile Pictures (Vaheeda & Balkees)</h3>
+        <p style="font-size:12.5px;color:var(--muted);margin:0 0 12px;">Sisters are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          ${["vaheeda", "balkees"].map((sid) => `
+            <div class="kpi-box" style="text-align:center;">
+              <div style="margin-bottom:6px;">${getAccountAvatarHtml(sid, "lg")}</div>
+              <div style="font-weight:800;text-transform:capitalize;">${sid}</div>
+              <label class="btn btn-soft btn-sm" style="margin-top:6px;">
+                📸 Upload Photo
+                <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
+              </label>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 10px;">🏪 Shop Identity & Admin Settings</h3>
+        <div class="field">
+          <label>Shop Name</label>
+          <input value="${esc(s.shopName)}" onchange="updateSettingField('shopName', this.value)">
+        </div>
+        <div class="field">
+          <label>Tagline</label>
+          <input value="${esc(s.tagline)}" onchange="updateSettingField('tagline', this.value)">
+        </div>
+        <div class="field">
+          <label>Home Greeting</label>
+          <input value="${esc(s.greeting)}" onchange="updateSettingField('greeting', this.value)">
+        </div>
+      </div>
+    ` : `
+      <div class="card" style="background:var(--gold-soft);border-color:#e6c97a;">
+        <div style="font-size:12.5px;color:#6e4e08;">
+          🔒 <b>Note for ${esc(currentAccount.displayName)}:</b> Shop-wide pricing, cloud backend, and backup controls are managed by the <b>Admin</b> account.
+        </div>
+      </div>
+    `}
+  `;
+}
+
+window.updateSettingField = function(key, val) {
+  db.settings[key] = val;
+  db.settings._u = Date.now();
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  renderApp();
+  showToast("Setting saved ✨");
+};
+
+window.changeMyOwnPin = function() {
+  const cur = (document.getElementById("curPinInput")?.value || "").trim();
+  const nw = (document.getElementById("newPinInput")?.value || "").trim();
+  const myId = currentAccount.id;
+  const expected = String((db.settings.pins && db.settings.pins[myId]) || currentAccount.defaultPin);
+  if (cur !== expected) return showToast("Current PIN is incorrect");
+  if (!/^\d{4,6}$/.test(nw)) return showToast("New PIN must be 4 to 6 digits");
+  db.settings.pins = { ...(db.settings.pins || DEFAULT_SETTINGS.pins), [myId]: nw };
+  db.settings._u = Date.now();
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  showToast("Your PIN has been updated 🔐");
+  renderApp();
+};
+
+window.uploadProfilePhoto = async function(accId, file) {
+  if (!file) return;
+  showToast("Uploading profile photo…");
+  const dataUrl = await compressImageFile(file, 480, 0.82);
+  const now = Date.now();
+  await putLocalImage("profile_" + accId, dataUrl, now, false);
+  db.settings.profilePhotosAt = { ...(db.settings.profilePhotosAt || {}), [accId]: now };
+  db.settings._u = now;
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  renderApp();
+  showToast("Profile photo updated 📸");
+};
+
+// ---- Add / Edit Product Modal (with Multiple Photo Upload) ----
+let draftPhotos = []; // Array of { id, data }
+let editingProdId = null;
+
+window.openProductModal = function(prodId = null) {
+  editingProdId = prodId;
+  const existing = prodId ? db.products.find((x) => x.id === prodId) : null;
+  const baseId = existing ? existing.id : uid();
+  window._draftProdBaseId = baseId;
+
+  draftPhotos = [];
+  if (existing) {
+    const ids = Array.isArray(existing.photoIds) && existing.photoIds.length ? existing.photoIds : (existing.imgAt ? [existing.id] : []);
+    ids.forEach((pid) => {
+      const im = imgMap.get(pid);
+      if (im && im.data) draftPhotos.push({ id: pid, data: im.data });
+    });
+  }
+  renderProductModalDom(existing);
+};
+
+function renderProductModalDom(existing) {
+  const p = existing || { name: "", code: "", category: "Kurti", variant: "M, L, XL", color: "", cost: "", price: "", qty: 1, low: 2, owner: "joint", notes: "" };
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>${existing ? "✏️ Edit Outfit" : "👗 Add New Outfit"}</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+
+        <div class="field">
+          <label>📸 Product Photos (${draftPhotos.length} uploaded · Multiple supported)</label>
+          <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;align-items:center;">
+            <label class="btn btn-soft" style="height:82px;min-width:92px;flex-direction:column;font-size:12px;flex-shrink:0;">
+              <span style="font-size:22px;">📷</span>
+              <span>Add Photos</span>
+              <input type="file" accept="image/*" multiple style="display:none;" onchange="handleMultiPhotoSelect(this.files)">
+            </label>
+            ${draftPhotos.map((ph, idx) => `
+              <div style="position:relative;width:76px;height:82px;border-radius:12px;overflow:hidden;border:2px solid ${idx === 0 ? 'var(--accent)' : 'var(--line)'};flex-shrink:0;">
+                <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;" onclick="makeDraftPhotoCover(${idx})">
+                <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,0.7);color:#fff;font-size:9px;padding:1px 5px;border-radius:6px;">
+                  ${idx === 0 ? "★ Cover" : `#${idx + 1}`}
+                </span>
+                <button onclick="removeDraftPhoto(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.85);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;">✕</button>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Outfit Name *</label>
+            <input id="pName" value="${esc(p.name)}" placeholder="e.g. Floral Organza Kurti">
+          </div>
+          <div class="field">
+            <label>SKU / Code</label>
+            <input id="pCode" value="${esc(p.code)}" placeholder="e.g. SIS-104">
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Category</label>
+            <select id="pCat">
+              ${(db.settings.categories || DEFAULT_SETTINGS.categories).map((c) => `<option value="${esc(c)}" ${p.category === c ? 'selected' : ''}>${esc(c)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Stock Quantity</label>
+            <input id="pQty" type="number" inputmode="numeric" value="${p.qty}">
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Available Sizes</label>
+            <input id="pVar" value="${esc(p.variant)}" placeholder="S, M, L, XL">
+          </div>
+          <div class="field">
+            <label>Available Colours</label>
+            <input id="pCol" value="${esc(p.color)}" placeholder="Emerald, Rose, Ivory">
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Cost Price (₹)</label>
+            <input id="pCost" type="number" inputmode="decimal" value="${p.cost}">
+          </div>
+          <div class="field">
+            <label>Selling Price (₹) *</label>
+            <input id="pPrice" type="number" inputmode="decimal" value="${p.price}">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Owner</label>
+          <select id="pOwner">
+            <option value="joint" ${p.owner === 'joint' ? 'selected' : ''}>👭 Joint (Vaheeda & Balkees)</option>
+            <option value="vaheeda" ${p.owner === 'vaheeda' ? 'selected' : ''}>🌷 Vaheeda</option>
+            <option value="balkees" ${p.owner === 'balkees' ? 'selected' : ''}>🌸 Balkees</option>
+          </select>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          ${existing ? `<button class="btn btn-danger" onclick="deleteProductById('${existing.id}')">🗑 Delete</button>` : ""}
+          <button class="btn btn-primary" style="flex:1;" onclick="saveProductFromModal()">💾 Save Outfit</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.handleMultiPhotoSelect = async function(fileList) {
+  if (!fileList || !fileList.length) return;
+  const curState = {
+    name: document.getElementById("pName")?.value || "",
+    code: document.getElementById("pCode")?.value || "",
+    category: document.getElementById("pCat")?.value || "Kurti",
+    qty: document.getElementById("pQty")?.value || 1,
+    variant: document.getElementById("pVar")?.value || "",
+    color: document.getElementById("pCol")?.value || "",
+    cost: document.getElementById("pCost")?.value || "",
+    price: document.getElementById("pPrice")?.value || "",
+    owner: document.getElementById("pOwner")?.value || "joint"
+  };
+  for (const file of Array.from(fileList)) {
+    const dataUrl = await compressImageFile(file);
+    const pid = draftPhotos.length === 0 ? window._draftProdBaseId : `${window._draftProdBaseId}_p${ uid().slice(-4) }`;
+    draftPhotos.push({ id: pid, data: dataUrl });
+  }
+  renderProductModalDom(curState);
+};
+
+window.makeDraftPhotoCover = function(idx) {
+  if (idx <= 0 || idx >= draftPhotos.length) return;
+  const [chosen] = draftPhotos.splice(idx, 1);
+  draftPhotos.unshift(chosen);
+  renderProductModalDom({
+    name: document.getElementById("pName")?.value || "",
+    code: document.getElementById("pCode")?.value || "",
+    category: document.getElementById("pCat")?.value || "Kurti",
+    qty: document.getElementById("pQty")?.value || 1,
+    variant: document.getElementById("pVar")?.value || "",
+    color: document.getElementById("pCol")?.value || "",
+    cost: document.getElementById("pCost")?.value || "",
+    price: document.getElementById("pPrice")?.value || "",
+    owner: document.getElementById("pOwner")?.value || "joint"
+  });
+};
+
+window.removeDraftPhoto = function(idx) {
+  draftPhotos.splice(idx, 1);
+  renderProductModalDom({
+    name: document.getElementById("pName")?.value || "",
+    code: document.getElementById("pCode")?.value || "",
+    category: document.getElementById("pCat")?.value || "Kurti",
+    qty: document.getElementById("pQty")?.value || 1,
+    variant: document.getElementById("pVar")?.value || "",
+    color: document.getElementById("pCol")?.value || "",
+    cost: document.getElementById("pCost")?.value || "",
+    price: document.getElementById("pPrice")?.value || "",
+    owner: document.getElementById("pOwner")?.value || "joint"
+  });
+};
+
+window.saveProductFromModal = async function() {
+  const name = (document.getElementById("pName")?.value || "").trim();
+  if (!name) return showToast("Please enter an outfit name");
+  const now = Date.now();
+  const id = window._draftProdBaseId;
+
+  // Ensure first photo uses product ID as key for backward compatibility with cover lookup
+  if (draftPhotos.length > 0 && draftPhotos[0].id !== id) {
+    draftPhotos[0].id = id;
+  }
+  const photoIds = draftPhotos.map((x) => x.id);
+  for (const ph of draftPhotos) {
+    await putLocalImage(ph.id, ph.data, now, false);
+  }
+
+  const item = {
+    id,
+    name,
+    code: (document.getElementById("pCode")?.value || "").trim(),
+    category: document.getElementById("pCat")?.value || "Kurti",
+    variant: (document.getElementById("pVar")?.value || "").trim(),
+    color: (document.getElementById("pCol")?.value || "").trim(),
+    cost: Number(document.getElementById("pCost")?.value) || 0,
+    price: Number(document.getElementById("pPrice")?.value) || 0,
+    qty: Number(document.getElementById("pQty")?.value) || 0,
+    low: 2,
+    owner: document.getElementById("pOwner")?.value || "joint",
+    notes: "",
+    imgAt: photoIds.length ? now : 0,
+    photoIds,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    _u: now
+  };
+
+  const idx = db.products.findIndex((x) => x.id === id);
+  if (idx >= 0) db.products[idx] = item;
+  else db.products.unshift(item);
+
+  saveLocalDb();
+  outbox.add(`products/${id}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Outfit saved & synced ✨");
+};
+
+window.adjustProductQty = function(prodId, delta) {
+  const p = db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  p.qty = Math.max(0, (Number(p.qty) || 0) + delta);
+  p._u = Date.now();
+  saveLocalDb();
+  outbox.add(`products/${p.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+};
+
+window.deleteProductById = function(prodId) {
+  db.products = db.products.filter((x) => x.id !== prodId);
+  db.tombs.push({ c: "products", id: prodId, _u: Date.now() });
+  saveLocalDb();
+  outbox.add(`products/${prodId}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Outfit deleted");
+};
+
+// ---- Multi-Photo Gallery Lightbox ----
+window.openProductGallery = function(prodId) {
+  const p = db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : [p.id];
+  const urls = ids.map((id) => imgMap.get(id)?.data).filter(Boolean);
+  if (!urls.length) return showToast("No photos uploaded for this outfit yet");
+  openLightbox(urls, 0);
+};
+
+window.openLightbox = function(urls, startIdx = 0) {
+  window._lbUrls = urls;
+  window._lbIdx = startIdx;
+  renderLightbox();
+};
+
+function renderLightbox() {
+  const urls = window._lbUrls || [];
+  const idx = window._lbIdx || 0;
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" style="align-items:center;padding:16px;" onclick="if(event.target===this)closeModal()">
+      <div class="card" style="width:100%;max-width:520px;padding:14px;text-align:center;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <b>Photo ${idx + 1} of ${urls.length}</b>
+          <button onclick="closeModal()" style="font-size:18px;">✕</button>
+        </div>
+        <img src="${urls[idx]}" style="width:100%;max-height:68dvh;object-fit:contain;border-radius:14px;">
+        ${urls.length > 1 ? `
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:10px;overflow-x:auto;">
+            ${urls.map((u, i) => `<img src="${u}" onclick="window._lbIdx=${i};renderLightbox()" style="width:52px;height:60px;object-fit:cover;border-radius:8px;border:2px solid ${i === idx ? 'var(--accent)' : 'transparent'};">`).join("")}
+          </div>
+        ` : ""}
+      </div>
+    </div>
+  `;
+}
+
+// ---- "Send to Customer" Modal (Photos + Price + Sizes + Colours + Working Temporary Link) ----
+window.openSendToCustomerModal = async function(prodId) {
+  const p = db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  const shareId = `${p.id.slice(-5)}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const baseUrl = window.location.origin.startsWith("http")
+    ? (window.location.origin + window.location.pathname.replace(/\/index\.html$/, "").replace(/\/$/, ""))
+    : "https://playnationx.github.io/sisora-boutique";
+  const tempUrl = `${baseUrl}/?item=${shareId}`;
+
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>📤 Send to Customer</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--muted);">
+          Share <b>${esc(p.name)}</b> photos, selling price (<b>${money(p.price)}</b>), available colours, sizes, and a live temporary showcase link:
+        </p>
+        <div class="field">
+          <label>Temporary Link Expiry</label>
+          <select id="shareExpHours">
+            <option value="24">24 Hours</option>
+            <option value="48" selected>48 Hours (Recommended)</option>
+            <option value="168">7 Days</option>
+          </select>
+        </div>
+        <div class="card" style="background:var(--bg);font-size:12.5px;white-space:pre-wrap;margin-bottom:12px;" id="sharePreviewBox">✨ *${esc(p.name)}* ✨
+🏷️ ${p.code ? `Code: ${esc(p.code)} · ` : ""}${esc(p.category)}
+💖 Price: *${money(p.price)}*
+🎨 Available Colours: ${esc(p.color || "As shown in photos")}
+📏 Available Sizes: ${esc(p.variant || "Free Size / Custom")}
+✅ Status: ${p.qty > 0 ? `Ready to ship (${p.qty} available)` : "Pre-order"}
+
+🔗 View Temporary Showcase Link:
+${tempUrl}</div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" style="flex:1;" onclick="executeCustomerShare('${p.id}', '${shareId}', '${tempUrl}')">📲 Share Photos + Link</button>
+          <button class="btn btn-outline" onclick="navigator.clipboard.writeText(document.getElementById('sharePreviewBox').innerText);showToast('Copied message & link!')">📋 Copy</button>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+window.executeCustomerShare = async function(prodId, shareId, tempUrl) {
+  const p = db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  const expHours = Number(document.getElementById("shareExpHours")?.value) || 48;
+  const now = Date.now();
+  const payload = {
+    shareId,
+    productId: p.id,
+    shopName: db.settings.shopName,
+    name: p.name,
+    code: p.code || "",
+    category: p.category || "Kurti",
+    price: money(p.price),
+    rawPrice: p.price,
+    availableSizes: p.variant || "Free Size",
+    availableColors: p.color || "As Shown",
+    inStock: (Number(p.qty) || 0) > 0,
+    qty: Number(p.qty) || 0,
+    notes: p.notes || "",
+    photoIds: Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : [p.id],
+    createdAt: now,
+    expiresAt: now + expHours * 3600000
+  };
+
+  showToast("Publishing temporary link…");
+  try {
+    await fbPut(`shops/${FIREBASE_CFG.shopId}/data/shares/${shareId}`, payload);
+  } catch (e) {}
+
+  const text = document.getElementById("sharePreviewBox")?.innerText || tempUrl;
+  closeModal();
+
+  // Try native iOS Web Share API with photos if supported
+  if (navigator.share) {
+    try {
+      const files = [];
+      for (const pid of payload.photoIds) {
+        const im = imgMap.get(pid);
+        if (im && im.data) {
+          const res = await fetch(im.data);
+          const blob = await res.blob();
+          files.push(new File([blob], `${p.name.replace(/\W+/g, "_")}_${pid}.jpg`, { type: "image/jpeg" }));
+        }
+      }
+      if (files.length > 0 && navigator.canShare && navigator.canShare({ files })) {
+        await navigator.share({ title: p.name, text, files });
+        return;
+      }
+      await navigator.share({ title: p.name, text, url: tempUrl });
+      return;
+    } catch (e) {}
+  }
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+};
+
+// ---- Record Sale Modal ----
+window.openSaleModal = function() {
+  const modalRoot = document.getElementById("modalRoot");
+  const firstProd = db.products[0];
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>🛍️ Record Sale</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div class="field">
+          <label>Select Outfit</label>
+          <select id="sProd" onchange="const pr=window.getProdPrice(this.value);if(pr)document.getElementById('sPrice').value=pr;">
+            ${db.products.map((p) => `<option value="${p.id}">${esc(p.name)} (${p.qty} left · ${money(p.price)})</option>`).join("")}
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Quantity</label>
+            <input id="sQty" type="number" value="1">
+          </div>
+          <div class="field">
+            <label>Selling Price Each (₹)</label>
+            <input id="sPrice" type="number" value="${firstProd ? firstProd.price : ''}">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Customer Name</label>
+            <input id="sCust" placeholder="e.g. Fathima">
+          </div>
+          <div class="field">
+            <label>Sold By Sister</label>
+            <select id="sSeller">
+              <option value="vaheeda" ${currentAccount.id === 'vaheeda' ? 'selected' : ''}>🌷 Vaheeda</option>
+              <option value="balkees" ${currentAccount.id === 'balkees' ? 'selected' : ''}>🌸 Balkees</option>
+              <option value="both">👭 Both Sisters</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Source / Channel</label>
+            <select id="sChan">
+              ${(db.settings.channels || DEFAULT_SETTINGS.channels).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Payment Method</label>
+            <select id="sPayMethod">
+              ${(db.settings.payMethods || DEFAULT_SETTINGS.payMethods).map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}
+              <option value="PENDING">⏳ Pending / Unpaid</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-gold" style="width:100%;margin-top:8px;" onclick="saveSaleFromModal()">✓ Complete Sale</button>
+      </div>
+    </div>
+  `;
+};
+window.getProdPrice = (id) => db.products.find((x) => x.id === id)?.price || "";
+
+window.saveSaleFromModal = function() {
+  const prodId = document.getElementById("sProd")?.value;
+  const prod = db.products.find((x) => x.id === prodId);
+  if (!prod) return showToast("Add a product first");
+  const qty = Math.max(1, Number(document.getElementById("sQty")?.value) || 1);
+  const price = Number(document.getElementById("sPrice")?.value) || prod.price;
+  const total = qty * price;
+  const payMethod = document.getElementById("sPayMethod")?.value || "UPI / GPay";
+  const now = Date.now();
+  const sale = {
+    id: uid(),
+    productId: prod.id,
+    productName: prod.name,
+    qty,
+    price,
+    costAtSale: prod.cost || 0,
+    owner: prod.owner || "joint",
+    customer: (document.getElementById("sCust")?.value || "").trim(),
+    customerId: "",
+    seller: document.getElementById("sSeller")?.value || "vaheeda",
+    channel: document.getElementById("sChan")?.value || "Instagram",
+    date: todayIso(),
+    notes: "",
+    total,
+    status: "ordered",
+    courier: "",
+    tracking: "",
+    address: "",
+    pays: payMethod === "PENDING" ? [] : [{ id: uid(), date: todayIso(), amount: total, method: payMethod, note: "" }],
+    returns: [],
+    createdAt: nowIso(),
+    _u: now
+  };
+  prod.qty = Math.max(0, (Number(prod.qty) || 0) - qty);
+  prod._u = now;
+  db.sales.unshift(sale);
+  saveLocalDb();
+  outbox.add(`sales/${sale.id}`);
+  outbox.add(`products/${prod.id}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Sale recorded 🎉");
+};
+
+window.updateSaleStatus = function(saleId, status) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  s.status = status;
+  s._u = Date.now();
+  saveLocalDb();
+  outbox.add(`sales/${s.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Order status updated");
+};
+
+window.markSalePaid = function(saleId) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  s.pays = [{ id: uid(), date: todayIso(), amount: s.total, method: "UPI / GPay", note: "" }];
+  s._u = Date.now();
+  saveLocalDb();
+  outbox.add(`sales/${s.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Marked as Paid ✓");
+};
+
+window.deleteSaleItem = function(saleId) {
+  db.sales = db.sales.filter((x) => x.id !== saleId);
+  db.tombs.push({ c: "sales", id: saleId, _u: Date.now() });
+  saveLocalDb();
+  outbox.add(`sales/${saleId}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Sale deleted");
+};
+
+// ---- Expense / Contribution Modal ----
+window.openExpenseModal = function(mode = "expense") {
+  const isCap = mode === "capital";
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>${isCap ? "💰 Add Sister Contribution" : "🧾 Add Expense"}</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <input id="eTitle" placeholder="${isCap ? 'e.g. Eid Stock Capital Injection' : 'e.g. Courier & Packaging'}">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Amount (₹)</label>
+            <input id="eAmt" type="number" inputmode="decimal" placeholder="0">
+          </div>
+          <div class="field">
+            <label>Sister</label>
+            <select id="ePaidBy">
+              <option value="vaheeda">🌷 Vaheeda</option>
+              <option value="balkees">🌸 Balkees</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Category</label>
+          <select id="eCat">
+            ${isCap
+              ? `<option value="Capital Contribution">Capital Contribution</option><option value="Partner Withdrawal">Partner Withdrawal</option>`
+              : (db.settings.expCats || DEFAULT_SETTINGS.expCats).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")
+            }
+          </select>
+        </div>
+        <button class="btn btn-primary" style="width:100%;" onclick="saveExpenseFromModal()">💾 Save Entry</button>
+      </div>
+    </div>
+  `;
+};
+
+window.saveExpenseFromModal = function() {
+  const title = (document.getElementById("eTitle")?.value || "").trim() || "Boutique Entry";
+  const amount = Number(document.getElementById("eAmt")?.value) || 0;
+  if (amount <= 0) return showToast("Enter a valid amount");
+  const now = Date.now();
+  const exp = {
+    id: uid(),
+    title,
+    category: document.getElementById("eCat")?.value || "Other",
+    amount,
+    paidBy: document.getElementById("ePaidBy")?.value || "vaheeda",
+    date: todayIso(),
+    notes: "",
+    createdAt: nowIso(),
+    _u: now
+  };
+  db.expenses.unshift(exp);
+  saveLocalDb();
+  outbox.add(`expenses/${exp.id}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Entry saved ✨");
+};
+
+// ---- Boot Application ----
+(async function boot() {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
+  const params = new URLSearchParams(window.location.search);
+  const shareItem = params.get("item");
+  if (shareItem) {
+    await renderCustomerShareMode(shareItem);
+    return;
+  }
+  await loadAllImagesFromIdb();
+  renderApp();
+  await pullFromFirebase();
+  setInterval(() => {
+    if (!document.hidden) pullFromFirebase();
+  }, 12000);
+})();
+</script>
+</body>
+</html>
