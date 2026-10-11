@@ -213,14 +213,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 }
 .bottom-nav-inner {
   max-width: 680px; margin: 0 auto;
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px;
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
 }
 .nav-item {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 6px 2px; border-radius: 12px; color: var(--muted);
-  font-size: 10.5px; font-weight: 700; gap: 2px;
+  padding: 6px 1px; border-radius: 12px; color: var(--muted);
+  font-size: 9.5px; font-weight: 700; gap: 2px; position: relative;
 }
-.nav-item .ico { font-size: 18px; line-height: 1.1; }
+.nav-item .ico { font-size: 17px; line-height: 1.1; position: relative; }
+.nav-badge-dot {
+  position: absolute; top: -2px; right: -5px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--red); border: 1.5px solid var(--paper);
+}
 .nav-item.active { color: var(--accent); background: var(--accent-soft); }
 
 /* Modals */
@@ -430,8 +435,11 @@ let outbox = new Set(JSON.parse(localStorage.getItem(LS_OUTBOX_KEY) || "[]"));
 // Filter states
 let stockQuery = "";
 let stockCategory = "All";
+let stockArchFilter = "all"; // "all", "active", "archived"
 let salesQuery = "";
 let salesFilter = "All";
+let purchasesQuery = "";
+let purchasesFilter = "all";
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -467,6 +475,7 @@ function loadLocalDb() {
       return {
         products: Array.isArray(raw.products) ? raw.products : [],
         sales: Array.isArray(raw.sales) ? raw.sales : [],
+        purchases: Array.isArray(raw.purchases) ? raw.purchases : [],
         expenses: Array.isArray(raw.expenses) ? raw.expenses : [],
         customers: Array.isArray(raw.customers) ? raw.customers : [],
         settlements: Array.isArray(raw.settlements) ? raw.settlements : [],
@@ -482,7 +491,7 @@ function loadLocalDb() {
     }
   } catch (e) {}
   return {
-    products: [], sales: [], expenses: [], customers: [], settlements: [], tombs: [],
+    products: [], sales: [], purchases: [], expenses: [], customers: [], settlements: [], tombs: [],
     settings: { ...DEFAULT_SETTINGS }
   };
 }
@@ -521,7 +530,7 @@ function applyTheme() {
   document.documentElement.style.fontSize = ((Number(s.textSize) || 100) / 100 * 16) + "px";
 }
 
-// ---- IndexedDB for Product & Profile Images ----
+// ---- IndexedDB for Product, Invoice & Profile Images ----
 function openImgDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open("sisora_images_idb", 1);
@@ -638,26 +647,28 @@ async function fbPut(path, payload) {
   return res.ok ? res.json() : null;
 }
 
-const COLLECTIONS = ["products", "sales", "expenses", "customers", "settlements"];
+const COLLECTIONS = ["products", "sales", "purchases", "expenses", "customers", "settlements"];
 
 async function pullFromFirebase() {
   try {
     syncStatus = "syncing";
     updateSyncPill();
     const shopId = FIREBASE_CFG.shopId;
-    const [prodObj, salesObj, expObj, custObj, setObj, settingsObj] = await Promise.all([
+    const [prodObj, salesObj, purObj, expObj, custObj, setObj, settingsObj] = await Promise.all([
       fbGet(`shops/${shopId}/data/products`),
       fbGet(`shops/${shopId}/data/sales`),
+      fbGet(`shops/${shopId}/data/purchases`),
       fbGet(`shops/${shopId}/data/expenses`),
       fbGet(`shops/${shopId}/data/customers`),
       fbGet(`shops/${shopId}/data/settlements`),
       fbGet(`shops/${shopId}/data/settings`)
     ]);
 
-    const colMap = { products: prodObj, sales: salesObj, expenses: expObj, customers: custObj, settlements: setObj };
+    const colMap = { products: prodObj, sales: salesObj, purchases: purObj, expenses: expObj, customers: custObj, settlements: setObj };
     let changed = false;
 
     for (const col of COLLECTIONS) {
+      if (!Array.isArray(db[col])) db[col] = [];
       const remoteCol = colMap[col];
       if (!remoteCol || typeof remoteCol !== "object") continue;
       for (const [id, wrapper] of Object.entries(remoteCol)) {
@@ -713,13 +724,20 @@ async function pullFromFirebase() {
       renderApp();
     }
 
-    // Fetch any missing product or profile images
+    // Fetch any missing product, invoice, or profile images
     const neededImgs = new Set();
     for (const p of db.products) {
       const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
       for (const pid of ids) {
         const localIm = imgMap.get(pid);
         if (!localIm || (p.imgAt && localIm.at < p.imgAt)) neededImgs.add(pid);
+      }
+    }
+    for (const pu of (db.purchases || [])) {
+      const ids = Array.isArray(pu.invoicePhotoIds) ? pu.invoicePhotoIds : [];
+      for (const pid of ids) {
+        const localIm = imgMap.get(pid);
+        if (!localIm || (pu.invoiceAt && localIm.at < pu.invoiceAt)) neededImgs.add(pid);
       }
     }
     const profAt = db.settings.profilePhotosAt || {};
@@ -864,7 +882,7 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
       for (const [pid, wrap] of Object.entries(rawProducts)) {
         if (!wrap || wrap.deleted || !wrap.j) continue;
         const p = typeof wrap.j === "string" ? JSON.parse(wrap.j) : wrap.j;
-        if (p && Number(p.qty) > 0) {
+        if (p && Number(p.qty) > 0 && !p.archived) {
           inStockList.push(p);
         }
       }
@@ -878,6 +896,15 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
         const st = getCatItemState(found);
         st.selected = true;
       }
+    }
+
+    if (catShopSettings.logoAt) {
+      fbGet(`shops/${shopId}/data/images/logo`).then((im) => {
+        if (im && im.data) {
+          catShopSettings._logoData = im.data;
+          renderLiveCatalogueDom();
+        }
+      }).catch(() => {});
     }
 
     renderLiveCatalogueDom();
@@ -927,7 +954,7 @@ function renderLiveCatalogueDom() {
     <div class="app-shell" style="padding-bottom:110px;">
       <header class="topbar">
         <div class="brand-row">
-          <div class="shop-logo">${esc(catShopSettings.logo || "S")}</div>
+          <div class="shop-logo">${catShopSettings._logoData ? `<img src="${catShopSettings._logoData}">` : esc(catShopSettings.logo || "S")}</div>
           <div class="brand-text">
             <h1>${esc(catShopSettings.catTitle || catShopSettings.shopName)}</h1>
             <p>${esc(catShopSettings.tagline)} · Live Customer Catalogue</p>
@@ -1147,7 +1174,7 @@ window.openCustomerCheckoutModal = () => {
             <input id="custOrdName" placeholder="Enter your name">
           </div>
           <div class="field">
-            <label>Phone / WhatsApp Number *</label>
+            <label>WhatsApp Number (for Live Order Status) *</label>
             <input id="custOrdPhone" type="tel" placeholder="e.g. 98765 43210">
           </div>
         </div>
@@ -1228,7 +1255,7 @@ window.submitCustomerCatalogueOrder = async () => {
       grandTotal += lineTotal;
 
       const saleId = uid();
-      const itemNote = `Size: ${st.size} · Colour: ${st.color} · Phone: ${phone} · Pay Pref: ${payPref}${extraNotes ? " · " + extraNotes : ""}`;
+      const itemNote = `Size: ${st.size} · Colour: ${st.color} · WhatsApp: ${phone} · Pay Pref: ${payPref}${extraNotes ? " · " + extraNotes : ""}`;
       const newSale = {
         id: saleId,
         productId: p.id,
@@ -1239,8 +1266,9 @@ window.submitCustomerCatalogueOrder = async () => {
         owner: p.owner || "joint",
         customer: name,
         customerId: custId,
+        customerPhone: phone,
         seller: p.owner === "balkees" ? "balkees" : "vaheeda",
-        channel: "WhatsApp",
+        channel: "Live Catalogue",
         date: todayIso(),
         notes: itemNote,
         total: lineTotal,
@@ -1248,6 +1276,8 @@ window.submitCustomerCatalogueOrder = async () => {
         courier: "",
         tracking: "",
         address,
+        isWebOrder: true,
+        orderSeen: false,
         pays: [],
         returns: [],
         createdAt: nowIso(),
@@ -1652,19 +1682,24 @@ function renderApp() {
 
       <nav class="bottom-nav">
         <div class="bottom-nav-inner">
-          ${[
-            ["home", "🏠", "Home"],
-            ["stock", "👗", "Stock"],
-            ["sales", "🛍️", "Sales"],
-            ["reports", "📊", "Reports"],
-            ["money", "💝", "Money"],
-            ["more", "⚙️", "Settings"]
-          ].map(([id, ico, label]) => `
-            <button class="nav-item ${activeTab === id ? 'active' : ''}" onclick="switchTab('${id}')">
-              <span class="ico">${ico}</span>
-              <span>${label}</span>
-            </button>
-          `).join("")}
+          ${(() => {
+            const unseenCount = (db.sales || []).filter((s) => s.isWebOrder && !s.orderSeen).length;
+            return [
+              ["home", "🏠", "Home", unseenCount],
+              ["stock", "👗", "Stock", 0],
+              ["purchases", "📦", "Purchases", 0],
+              ["sales", "🛍️", "Sales", unseenCount],
+              ["reports", "📊", "Reports", 0],
+              ["money", "💝", "Money", 0],
+              ["more", "⚙️", "Settings", 0]
+            ].map(([id, ico, label, badge]) => `
+              <button class="nav-item ${activeTab === id ? 'active' : ''}" onclick="switchTab('${id}')">
+                <span class="ico">${ico}</span>
+                <span>${label}</span>
+                ${badge > 0 ? `<span class="nav-badge-dot"></span>` : ""}
+              </button>
+            `).join("");
+          })()}
         </div>
       </nav>
     </div>
@@ -1672,27 +1707,309 @@ function renderApp() {
   updateSyncPill();
 }
 
+// ---- Sister Available Cash Wallets & Financial Totals (Synced with Android Models.kt) ----
+function computeSisterCashWallets() {
+  function calcForSister(sisId, sisName) {
+    let salesCashReceived = 0;
+    let salesReturnsRefunded = 0;
+    for (const s of (db.sales || [])) {
+      for (const p of (s.pays || [])) {
+        const amt = Number(p.amount) || 0;
+        const recBy = p.receivedBy || s.seller || "vaheeda";
+        if (recBy === "split") {
+          salesCashReceived += sisId === "vaheeda" ? (Number(p.vaheedaAmount) || 0) : (Number(p.balkeesAmount) || 0);
+        } else if (recBy === sisId) {
+          salesCashReceived += amt;
+        } else if (recBy === "both") {
+          salesCashReceived += amt / 2;
+        }
+      }
+      for (const r of (s.returns || [])) {
+        const ref = Number(r.refund) || 0;
+        const mode = r.cashFlowMode || ("refund_by_" + (s.seller === "balkees" ? "balkees" : "vaheeda"));
+        if (mode === "store_credit") continue;
+        if (mode === "refund_split") {
+          salesReturnsRefunded += sisId === "vaheeda" ? (Number(r.vaheedaRefund) || 0) : (Number(r.balkeesRefund) || 0);
+        } else if (mode === "refund_by_" + sisId) {
+          salesReturnsRefunded += ref;
+        }
+      }
+    }
+
+    let purchasesFromAvailableCash = 0;
+    let purchasesNewInvestment = 0;
+    let purchaseReturnsCashIn = 0;
+    for (const pur of (db.purchases || [])) {
+      const tot = Number(pur.totalAmount) || 0;
+      let myPaid = 0;
+      if (pur.paidBy === "split") {
+        myPaid = sisId === "vaheeda" ? (Number(pur.vaheedaPaid) || 0) : (Number(pur.balkeesPaid) || 0);
+      } else if (pur.paidBy === sisId) {
+        myPaid = tot;
+      }
+      if ((pur.fundingSource || "available_cash") === "new_investment") {
+        purchasesNewInvestment += myPaid;
+      } else {
+        purchasesFromAvailableCash += myPaid;
+      }
+
+      for (const pr of (pur.returns || [])) {
+        const rAmt = Number(pr.returnAmount) || 0;
+        const cf = pr.cashFlowMode || "cash_refund_vaheeda";
+        if (cf === "supplier_credit") continue;
+        if (cf === "cash_refund_split") {
+          purchaseReturnsCashIn += sisId === "vaheeda" ? (Number(pr.vaheedaRefund) || 0) : (Number(pr.balkeesRefund) || 0);
+        } else if (cf === "cash_refund_" + sisId) {
+          purchaseReturnsCashIn += rAmt;
+        }
+      }
+    }
+
+    let expensesFromAvailableCash = 0;
+    let expensesNewInvestment = 0;
+    let capitalAdded = 0;
+    let capitalWithdrawn = 0;
+
+    for (const e of (db.expenses || [])) {
+      const amt = Number(e.amount) || 0;
+      let myShare = 0;
+      if (e.paidBy === "split") {
+        myShare = sisId === "vaheeda" ? (Number(e.vaheedaPaid) || 0) : (Number(e.balkeesPaid) || 0);
+      } else if (e.paidBy === sisId) {
+        myShare = amt;
+      }
+      if (e.category === "Capital Contribution") {
+        capitalAdded += myShare;
+      } else if (e.category === "Partner Withdrawal") {
+        capitalWithdrawn += myShare;
+      } else {
+        if ((e.fundingSource || "available_cash") === "new_investment") {
+          expensesNewInvestment += myShare;
+        } else {
+          expensesFromAvailableCash += myShare;
+        }
+      }
+    }
+
+    let settlementsIn = 0, settlementsOut = 0;
+    for (const st of (db.settlements || [])) {
+      const a = Number(st.amount) || 0;
+      if (st.to === sisId) settlementsIn += a;
+      if (st.from === sisId) settlementsOut += a;
+    }
+
+    const availableCash = salesCashReceived + purchaseReturnsCashIn + settlementsIn
+      - salesReturnsRefunded - purchasesFromAvailableCash - expensesFromAvailableCash - capitalWithdrawn - settlementsOut;
+    const totalOutOfPocketInvested = capitalAdded + purchasesNewInvestment + expensesNewInvestment;
+
+    return {
+      sisterId: sisId,
+      sisterName: sisName,
+      salesCashReceived,
+      salesReturnsRefunded,
+      purchasesFromAvailableCash,
+      purchasesNewInvestment,
+      purchaseReturnsCashIn,
+      expensesFromAvailableCash,
+      expensesNewInvestment,
+      capitalAdded,
+      capitalWithdrawn,
+      availableCash,
+      totalOutOfPocketInvested
+    };
+  }
+  return {
+    vaheeda: calcForSister("vaheeda", "Vaheeda"),
+    balkees: calcForSister("balkees", "Balkees")
+  };
+}
+
 function computeTotals() {
-  let revenue = 0, cogs = 0, received = 0, due = 0;
-  for (const s of db.sales) {
+  let salesGross = 0, returnsTotal = 0, revenue = 0, cogs = 0, received = 0, due = 0;
+  for (const s of (db.sales || [])) {
+    const gross = Number(s.total) || 0;
     const retRefund = (s.returns || []).reduce((a, r) => a + (Number(r.refund) || 0), 0);
     const retRestock = (s.returns || []).reduce((a, r) => a + (Number(r.restock) || 0), 0);
-    const netTot = Math.max(0, (Number(s.total) || 0) - retRefund);
+    const netTot = Math.max(0, gross - retRefund);
     const paid = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+    salesGross += gross;
+    returnsTotal += retRefund;
     revenue += netTot;
     cogs += (Number(s.costAtSale) || 0) * Math.max(0, (Number(s.qty) || 1) - retRestock);
     received += paid;
     due += Math.max(0, netTot - paid);
   }
-  const expenses = db.expenses
+  const expenses = (db.expenses || [])
     .filter((e) => e.category !== "Capital Contribution" && e.category !== "Partner Withdrawal")
     .reduce((a, e) => a + (Number(e.amount) || 0), 0);
-  const stockUnits = db.products.reduce((a, p) => a + Math.max(0, Number(p.qty) || 0), 0);
-  const stockCost = db.products.reduce((a, p) => a + Math.max(0, Number(p.qty) || 0) * (Number(p.cost) || 0), 0);
-  const stockRetail = db.products.reduce((a, p) => a + Math.max(0, Number(p.qty) || 0) * (Number(p.price) || 0), 0);
+
+  let purchasesGross = 0, purchaseReturnsTotal = 0, purchasesNet = 0, purchasesFromSalesCash = 0, purchasesFromNewInvestment = 0;
+  for (const pur of (db.purchases || [])) {
+    const g = Number(pur.totalAmount) || 0;
+    const prRef = (pur.returns || []).reduce((a, r) => a + (Number(r.returnAmount) || 0), 0);
+    const netP = Math.max(0, g - prRef);
+    purchasesGross += g;
+    purchaseReturnsTotal += prRef;
+    purchasesNet += netP;
+    if ((pur.fundingSource || "available_cash") === "new_investment") purchasesFromNewInvestment += netP;
+    else purchasesFromSalesCash += netP;
+  }
+
+  const stockUnits = (db.products || []).reduce((a, p) => a + Math.max(0, Number(p.qty) || 0), 0);
+  const stockCost = (db.products || []).reduce((a, p) => a + Math.max(0, Number(p.qty) || 0) * (Number(p.cost) || 0), 0);
+  const stockRetail = (db.products || []).reduce((a, p) => a + Math.max(0, Number(p.qty) || 0) * (Number(p.price) || 0), 0);
   const netProfit = revenue - cogs - expenses;
-  return { revenue, cogs, received, due, expenses, stockUnits, stockCost, stockRetail, netProfit };
+  const wallets = computeSisterCashWallets();
+  return {
+    salesGross, returnsTotal, revenue, cogs, received, due, expenses,
+    purchasesGross, purchaseReturnsTotal, purchasesNet, purchasesFromSalesCash, purchasesFromNewInvestment,
+    stockUnits, stockCost, stockRetail, netProfit,
+    vaheedaCash: wallets.vaheeda.availableCash,
+    balkeesCash: wallets.balkees.availableCash,
+    totalAvailableCash: wallets.vaheeda.availableCash + wallets.balkees.availableCash,
+    wallets
+  };
 }
+
+function renderSistersCashWalletCardHtml(compact = false) {
+  const hidePriv = db.settings.privacy;
+  const wallets = computeSisterCashWallets();
+  const v = wallets.vaheeda;
+  const b = wallets.balkees;
+  const combined = v.availableCash + b.availableCash;
+
+  if (compact) {
+    return `
+      <div class="card" style="padding:11px 14px;background:linear-gradient(135deg, var(--card), var(--accent-soft));border-color:rgba(200,95,131,0.38);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:12px;font-weight:800;color:var(--accent);">💰 AVAILABLE CASH IN HAND (FROM SALES)</span>
+          <span class="pill green">Combined: ${hidePriv ? "••••" : money(combined)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div style="background:var(--card);padding:8px 10px;border-radius:10px;border:1px solid var(--line);">
+            <div style="font-size:11px;color:var(--muted);font-weight:700;">🌷 Vaheeda Cash</div>
+            <div style="font-size:15px;font-weight:900;color:${v.availableCash < 0 ? 'var(--red)' : 'var(--green)'};">${hidePriv ? "••••" : money(v.availableCash)}</div>
+          </div>
+          <div style="background:var(--card);padding:8px 10px;border-radius:10px;border:1px solid var(--line);">
+            <div style="font-size:11px;color:var(--muted);font-weight:700;">🌸 Balkees Cash</div>
+            <div style="font-size:15px;font-weight:900;color:${b.availableCash < 0 ? 'var(--red)' : 'var(--green)'};">${hidePriv ? "••••" : money(b.availableCash)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="card" style="border-color:rgba(200,95,131,0.42);background:linear-gradient(145deg, var(--card), var(--accent-soft));">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <div>
+          <div style="font-weight:900;font-size:15.5px;">💰 Available Cash Held by Sisters</div>
+          <div style="font-size:11.5px;color:var(--muted);">Live cash in hand from sales payments minus purchases/expenses paid from sales cash</div>
+        </div>
+        <span class="pill green" style="font-weight:900;">Total: ${hidePriv ? "••••" : money(combined)}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="kpi-box" style="background:var(--card);">
+          <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px;">
+            ${getAccountAvatarHtml("vaheeda")}
+            <div>
+              <div style="font-weight:800;font-size:13.5px;">Vaheeda</div>
+              <div style="font-size:10.5px;color:var(--muted);">Cash Wallet</div>
+            </div>
+          </div>
+          <div style="font-size:19px;font-weight:900;color:${v.availableCash < 0 ? 'var(--red)' : 'var(--green)'};">${hidePriv ? "••••" : money(v.availableCash)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45;">
+            + Sales Rcvd: <b>${hidePriv ? "••" : money(v.salesCashReceived)}</b><br>
+            − Used for Stock/Exp: <b>${hidePriv ? "••" : money(v.purchasesFromAvailableCash + v.expensesFromAvailableCash)}</b><br>
+            💎 New Investment: <b>${hidePriv ? "••" : money(v.totalOutOfPocketInvested)}</b>
+          </div>
+        </div>
+        <div class="kpi-box" style="background:var(--card);">
+          <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px;">
+            ${getAccountAvatarHtml("balkees")}
+            <div>
+              <div style="font-weight:800;font-size:13.5px;">Balkees</div>
+              <div style="font-size:10.5px;color:var(--muted);">Cash Wallet</div>
+            </div>
+          </div>
+          <div style="font-size:19px;font-weight:900;color:${b.availableCash < 0 ? 'var(--red)' : 'var(--green)'};">${hidePriv ? "••••" : money(b.availableCash)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45;">
+            + Sales Rcvd: <b>${hidePriv ? "••" : money(b.salesCashReceived)}</b><br>
+            − Used for Stock/Exp: <b>${hidePriv ? "••" : money(b.purchasesFromAvailableCash + b.expensesFromAvailableCash)}</b><br>
+            💎 New Investment: <b>${hidePriv ? "••" : money(b.totalOutOfPocketInvested)}</b>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---- Received Online Customer Orders Notification Banner ----
+function renderWebOrdersAlertHtml() {
+  const unseen = (db.sales || []).filter((s) => s.isWebOrder && !s.orderSeen);
+  if (!unseen.length) return "";
+  return `
+    <div class="card" style="border:2px solid var(--accent);background:linear-gradient(135deg, var(--accent-soft), var(--card));">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:22px;">🔔</span>
+          <div>
+            <div style="font-weight:900;font-size:15px;color:var(--accent);">New Customer Orders Received (${unseen.length})!</div>
+            <div style="font-size:11.5px;color:var(--muted);">Orders placed by customers through your Shared Catalogue / Product Link</div>
+          </div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="markAllWebOrdersSeen()">✓ Mark All Seen</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${unseen.map((s) => {
+          const phone = s.customerPhone || (db.customers.find((c) => c.id === s.customerId)?.phone) || "";
+          return `
+            <div style="background:var(--card);padding:10px 12px;border-radius:12px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:180px;">
+                <div style="font-weight:800;font-size:14px;">🛍️ ${esc(s.productName)} × ${s.qty} — <span style="color:var(--accent);">${money(s.total)}</span></div>
+                <div style="font-size:12px;color:var(--muted);">👤 <b>${esc(s.customer || "Customer")}</b> ${phone ? `· 📞 ${esc(phone)}` : ""} · ${esc(s.date)}</div>
+                ${s.address ? `<div style="font-size:11.5px;color:var(--muted);">📍 ${esc(s.address)}</div>` : ""}
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-gold btn-sm" onclick="sendLiveOrderStatusWhatsApp('${s.id}', 'ordered')">📲 WhatsApp Confirm</button>
+                <button class="btn btn-primary btn-sm" onclick="markSingleWebOrderSeen('${s.id}')">✓ Accept</button>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+window.markSingleWebOrderSeen = function(saleId) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  s.orderSeen = true;
+  s._u = Date.now();
+  saveLocalDb();
+  outbox.add(`sales/${s.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Order marked as seen ✓");
+};
+
+window.markAllWebOrdersSeen = function() {
+  const now = Date.now();
+  (db.sales || []).forEach((s) => {
+    if (s.isWebOrder && !s.orderSeen) {
+      s.orderSeen = true;
+      s._u = now;
+      outbox.add(`sales/${s.id}`);
+    }
+  });
+  saveLocalDb();
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("All new customer orders marked as seen ✓");
+};
 
 function renderProductCardHtml(p) {
   const photoIds = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
@@ -1702,9 +2019,10 @@ function renderProductCardHtml(p) {
   const qty = Number(p.qty) || 0;
   const low = Number(p.low) || 2;
   const hidePriv = db.settings.privacy;
+  const isArchived = Boolean(p.archived);
 
   return `
-    <div class="prod-tile">
+    <div class="prod-tile" style="${isArchived ? 'opacity:0.78;border-style:dashed;' : ''}">
       ${coverUrl ? `<div class="prod-blur-bg" style="background-image:url('${coverUrl}')"></div>` : ""}
       <div class="prod-scrim">
         <div class="prod-row">
@@ -1727,6 +2045,7 @@ function renderProductCardHtml(p) {
               <span class="pill ${qty <= 0 ? 'red' : (qty <= low ? 'amber' : 'green')}">
                 ${qty <= 0 ? "Sold out" : `${qty} in stock`}
               </span>
+              ${isArchived ? `<span class="pill amber">🙈 Hidden from Catalogue</span>` : `<span class="pill green">👁️ In Catalogue</span>`}
             </div>
           </div>
         </div>
@@ -1736,8 +2055,11 @@ function renderProductCardHtml(p) {
             <span style="font-weight:800;font-size:13px;min-width:22px;text-align:center;">${qty}</span>
             <button class="btn btn-outline btn-sm" onclick="adjustProductQty('${p.id}', 1)">+</button>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-gold btn-sm" onclick="openSendToCustomerModal('${p.id}')">📤 Send to Customer</button>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">
+            <button class="btn btn-outline btn-sm" onclick="toggleArchiveProduct('${p.id}')" title="Hide or Show in Customer Catalogue">
+              ${isArchived ? "👁️ Show" : "🙈 Hide"}
+            </button>
+            <button class="btn btn-gold btn-sm" onclick="openSendToCustomerModal('${p.id}')">📤 Share</button>
             <button class="btn btn-soft btn-sm" onclick="openProductModal('${p.id}')">✏️ Edit</button>
             <button class="btn btn-danger btn-sm" onclick="deleteProductById('${p.id}')" title="Delete (Requires Approval)">🗑</button>
           </div>
@@ -1746,6 +2068,19 @@ function renderProductCardHtml(p) {
     </div>
   `;
 }
+
+window.toggleArchiveProduct = function(prodId) {
+  const p = db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  p.archived = !p.archived;
+  p._u = Date.now();
+  saveLocalDb();
+  outbox.add(`products/${p.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast(p.archived ? "🙈 Outfit hidden from customer catalogue" : "👁️ Outfit visible in customer catalogue");
+};
 
 function renderPendingDeletesBannerHtml() {
   const list = Array.isArray(db.settings.pendingDeletes) ? db.settings.pendingDeletes : [];
@@ -1781,7 +2116,8 @@ function renderPendingDeletesBannerHtml() {
 }
 
 function renderShareLiveCatalogueCardHtml() {
-  const inStockCount = db.products.filter((p) => (Number(p.qty) || 0) > 0).length;
+  const inStockCount = db.products.filter((p) => (Number(p.qty) || 0) > 0 && !p.archived).length;
+  const archivedCount = db.products.filter((p) => p.archived).length;
   const liveUrl = getLiveCatalogueUrl();
   return `
     <div class="card" style="border-color:rgba(200,95,131,0.4);background:linear-gradient(135deg, var(--card), var(--accent-soft));">
@@ -1789,7 +2125,7 @@ function renderShareLiveCatalogueCardHtml() {
         <div>
           <div style="font-weight:800;font-size:15px;">🌐 Live Customer Catalogue & Order Link</div>
           <div style="font-size:12px;color:var(--muted);margin-top:2px;">
-            Customers see <b>${inStockCount} live in-stock outfits</b> with clickable multi-photo zoom, can select <b>single or multiple dresses</b>, and tap <b>Make Order</b> directly!
+            Customers see <b>${inStockCount} live visible outfits</b>${archivedCount > 0 ? ` (${archivedCount} archived/hidden)` : ""}, can select <b>single or multiple dresses</b>, and tap <b>Make Order</b>!
           </div>
         </div>
         <span class="pill green" style="flex-shrink:0;">LIVE</span>
@@ -1807,6 +2143,7 @@ function renderShareLiveCatalogueCardHtml() {
 function renderActiveTabContent() {
   if (activeTab === "home") return renderHomeTab();
   if (activeTab === "stock") return renderStockTab();
+  if (activeTab === "purchases") return renderPurchasesTab();
   if (activeTab === "sales") return renderSalesTab();
   if (activeTab === "reports") return renderReportsTab();
   if (activeTab === "money") return renderMoneyTab();
@@ -1826,38 +2163,43 @@ function renderHomeTab() {
       </div>
     ` : ""}
 
+    ${renderWebOrdersAlertHtml()}
     ${renderPendingDeletesBannerHtml()}
 
     ${db.settings.showQuick !== false ? `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:9px;">
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
         <button class="btn btn-primary" onclick="openProductModal()">＋ Add Dress / Stock</button>
         <button class="btn btn-gold" onclick="openSaleModal()">🛍️ Record Sale</button>
+        <button class="btn btn-soft" onclick="openPurchaseModal()">📦 Record Purchase</button>
+        <button class="btn btn-outline" onclick="openExpenseModal('expense')">🧾 Add Expense</button>
       </div>
     ` : ""}
+
+    ${renderSistersCashWalletCardHtml(false)}
 
     ${renderShareLiveCatalogueCardHtml()}
 
     ${db.settings.showStats !== false ? `
       <div class="kpi-grid">
         <div class="kpi-box">
-          <div class="kpi-label">TOTAL SALES</div>
-          <div class="kpi-val">${money(t.revenue)}</div>
+          <div class="kpi-label">NET SALES</div>
+          <div class="kpi-val">${hidePriv ? "••••" : money(t.revenue)}</div>
           <div class="kpi-sub">${db.sales.length} orders · ${money(t.due)} due</div>
         </div>
         <div class="kpi-box">
           <div class="kpi-label">NET PROFIT</div>
           <div class="kpi-val" style="color:var(--green);">${hidePriv ? "••••" : money(t.netProfit)}</div>
-          <div class="kpi-sub">Expenses: ${money(t.expenses)}</div>
+          <div class="kpi-sub">Expenses: ${hidePriv ? "••" : money(t.expenses)}</div>
         </div>
         <div class="kpi-box">
-          <div class="kpi-label">STOCK IN HAND</div>
-          <div class="kpi-val">${t.stockUnits} pcs</div>
-          <div class="kpi-sub">${db.products.length} designs</div>
+          <div class="kpi-label">NET PURCHASES</div>
+          <div class="kpi-val">${hidePriv ? "••••" : money(t.purchasesNet)}</div>
+          <div class="kpi-sub">${(db.purchases || []).length} bills · Ret: ${money(t.purchaseReturnsTotal)}</div>
         </div>
         <div class="kpi-box">
           <div class="kpi-label">STOCK VALUE</div>
           <div class="kpi-val">${hidePriv ? "••••" : money(t.stockRetail)}</div>
-          <div class="kpi-sub">${hidePriv ? "" : "Cost: " + money(t.stockCost)}</div>
+          <div class="kpi-sub">${t.stockUnits} pcs (${hidePriv ? "••" : "Cost " + money(t.stockCost)})</div>
         </div>
       </div>
     ` : ""}
@@ -1887,11 +2229,14 @@ function renderHomeTab() {
 
 function renderStockTab() {
   const cats = ["All", ...(db.settings.categories || DEFAULT_SETTINGS.categories)];
+  const activeCount = db.products.filter((p) => !p.archived).length;
+  const archCount = db.products.filter((p) => p.archived).length;
   const filtered = db.products.filter((p) => {
     const q = stockQuery.trim().toLowerCase();
     const matchQ = !q || [p.name, p.code, p.category, p.color, p.variant].some((v) => String(v || "").toLowerCase().includes(q));
     const matchCat = stockCategory === "All" || p.category === stockCategory;
-    return matchQ && matchCat;
+    const matchArch = stockArchFilter === "all" || (stockArchFilter === "active" && !p.archived) || (stockArchFilter === "archived" && Boolean(p.archived));
+    return matchQ && matchCat && matchArch;
   });
 
   return `
@@ -1899,6 +2244,11 @@ function renderStockTab() {
     <div style="display:flex;gap:8px;align-items:center;">
       <input type="search" placeholder="🔍 Search name, code, colour, size…" value="${esc(stockQuery)}" oninput="window.setStockQuery(this.value)">
       <button class="btn btn-primary" style="flex-shrink:0;" onclick="openProductModal()">＋ Add</button>
+    </div>
+    <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;">
+      <button class="btn btn-sm ${stockArchFilter === 'all' ? 'btn-primary' : 'btn-outline'}" onclick="window.setStockArchFilter('all')">All (${db.products.length})</button>
+      <button class="btn btn-sm ${stockArchFilter === 'active' ? 'btn-primary' : 'btn-outline'}" onclick="window.setStockArchFilter('active')">👁️ Catalogue Visible (${activeCount})</button>
+      <button class="btn btn-sm ${stockArchFilter === 'archived' ? 'btn-primary' : 'btn-outline'}" onclick="window.setStockArchFilter('archived')">🙈 Archived / Hidden (${archCount})</button>
     </div>
     <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
       ${cats.map((c) => `<button class="btn btn-sm ${stockCategory === c ? 'btn-primary' : 'btn-outline'}" style="flex-shrink:0;" onclick="window.setStockCat('${esc(c)}')">${esc(c)}</button>`).join("")}
@@ -1908,46 +2258,195 @@ function renderStockTab() {
 }
 window.setStockQuery = (v) => { stockQuery = v; renderApp(); };
 window.setStockCat = (c) => { stockCategory = c; renderApp(); };
+window.setStockArchFilter = (f) => { stockArchFilter = f; renderApp(); };
+
+// ---- Purchases Tab (Purchase Entry, Split Payment, Invoice Upload, Funding Source, Purchase Return) ----
+function renderPurchasesTab() {
+  const t = computeTotals();
+  const hidePriv = db.settings.privacy;
+  const list = db.purchases || [];
+  const filtered = list.filter((pur) => {
+    const q = purchasesQuery.trim().toLowerCase();
+    const matchQ = !q || [pur.supplier, pur.invoiceNo, pur.itemsSummary, pur.productName, pur.notes].some((v) => String(v || "").toLowerCase().includes(q));
+    const matchF = purchasesFilter === "all"
+      || (purchasesFilter === "available_cash" && (pur.fundingSource || "available_cash") === "available_cash")
+      || (purchasesFilter === "new_investment" && pur.fundingSource === "new_investment")
+      || (purchasesFilter === "split" && pur.paidBy === "split");
+    return matchQ && matchF;
+  });
+
+  return `
+    ${renderSistersCashWalletCardHtml(true)}
+
+    <div class="kpi-grid">
+      <div class="kpi-box">
+        <div class="kpi-label">NET PURCHASES</div>
+        <div class="kpi-val">${hidePriv ? "••••" : money(t.purchasesNet)}</div>
+        <div class="kpi-sub">Gross: ${money(t.purchasesGross)} · Ret: ${money(t.purchaseReturnsTotal)}</div>
+      </div>
+      <div class="kpi-box">
+        <div class="kpi-label">FUNDING SOURCE</div>
+        <div class="kpi-val" style="font-size:15px;color:var(--green);">Sales Cash: ${hidePriv ? "••" : money(t.purchasesFromSalesCash)}</div>
+        <div class="kpi-sub">New Invest: ${hidePriv ? "••" : money(t.purchasesFromNewInvestment)}</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;">
+      <input type="search" placeholder="🔍 Search supplier, invoice #, outfit…" value="${esc(purchasesQuery)}" oninput="window.setPurchasesQuery(this.value)">
+      <button class="btn btn-primary" style="flex-shrink:0;" onclick="openPurchaseModal()">＋ New Purchase</button>
+    </div>
+
+    <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+      ${[
+        ["all", "All Bills"],
+        ["available_cash", "💰 From Sales Cash"],
+        ["new_investment", "💎 New Investment"],
+        ["split", "👭 Split by Sisters"]
+      ].map(([k, lbl]) => `<button class="btn btn-sm ${purchasesFilter === k ? 'btn-primary' : 'btn-outline'}" style="flex-shrink:0;" onclick="window.setPurchasesFilter('${k}')">${lbl}</button>`).join("")}
+    </div>
+
+    ${filtered.length === 0 ? `
+      <div class="card" style="text-align:center;padding:26px;">
+        <div style="font-size:36px;">📦</div>
+        <h3 style="margin:6px 0 4px;">No purchase bills recorded yet</h3>
+        <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px;">Record stock purchases with invoice photos, sister split payments, funding source (Sales Cash vs New Investment), and purchase returns.</p>
+        <button class="btn btn-primary" onclick="openPurchaseModal()">＋ Record First Purchase</button>
+      </div>
+    ` : filtered.map((pur) => {
+      const invIds = Array.isArray(pur.invoicePhotoIds) ? pur.invoicePhotoIds : [];
+      const retTotal = (pur.returns || []).reduce((a, r) => a + (Number(r.returnAmount) || 0), 0);
+      const netAmt = Math.max(0, (Number(pur.totalAmount) || 0) - retTotal);
+      const paidByLabel = pur.paidBy === "split"
+        ? `Split (Vaheeda: ${money(pur.vaheedaPaid)} · Balkees: ${money(pur.balkeesPaid)})`
+        : (pur.paidBy === "balkees" ? "🌸 Balkees" : "🌷 Vaheeda");
+      const fundLabel = pur.fundingSource === "new_investment" ? "💎 New Investment (Out of Pocket)" : "💰 Available Cash via Sales";
+
+      return `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;">
+              <div style="font-weight:800;font-size:15px;">📦 ${esc(pur.itemsSummary || pur.productName || "Stock Purchase")} ${pur.qty ? `× ${pur.qty}` : ""}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;">
+                ${esc(pur.date)} · Supplier: <b>${esc(pur.supplier || "Vendor")}</b> ${pur.invoiceNo ? `· Inv #<b>${esc(pur.invoiceNo)}</b>` : ""}
+              </div>
+              <div class="pill-row" style="margin-top:6px;">
+                <span class="pill">${paidByLabel}</span>
+                <span class="pill ${pur.fundingSource === 'new_investment' ? 'amber' : 'green'}">${fundLabel}</span>
+                ${invIds.length > 0 ? `<span class="pill" style="cursor:pointer;" onclick="openPurchaseInvoiceGallery('${pur.id}')">🧾 ${invIds.length} Invoice Photo(s)</span>` : ""}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-weight:900;font-size:16.5px;color:var(--accent);">${money(netAmt)}</div>
+              ${retTotal > 0 ? `<div style="font-size:11px;color:var(--red);">Returned: −${money(retTotal)}</div>` : ""}
+            </div>
+          </div>
+
+          ${(pur.returns && pur.returns.length > 0) ? `
+            <div style="margin-top:8px;padding:8px 10px;background:var(--red-soft);border-radius:10px;font-size:11.5px;">
+              <b>↩️ Purchase Returns (${pur.returns.length}):</b>
+              ${pur.returns.map((r) => `
+                <div style="margin-top:3px;">
+                  • ${esc(r.date)}: Qty ${r.qty} · <b>${money(r.returnAmount)}</b> (${esc(r.cashFlowMode?.replace(/_/g, " ") || "refund")}) ${r.reason ? `— ${esc(r.reason)}` : ""}
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:flex-end;">
+            ${invIds.length > 0 ? `<button class="btn btn-outline btn-sm" onclick="openPurchaseInvoiceGallery('${pur.id}')">🧾 View Invoice</button>` : ""}
+            <button class="btn btn-gold btn-sm" onclick="openPurchaseReturnModal('${pur.id}')">↩️ Purchase Return</button>
+            <button class="btn btn-soft btn-sm" onclick="openPurchaseModal('${pur.id}')">✏️ Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deletePurchaseItem('${pur.id}')">🗑</button>
+          </div>
+        </div>
+      `;
+    }).join("")}
+  `;
+}
+window.setPurchasesQuery = (v) => { purchasesQuery = v; renderApp(); };
+window.setPurchasesFilter = (f) => { purchasesFilter = f; renderApp(); };
 
 function renderSalesTab() {
   const statuses = ["All", "ordered", "packed", "shipped", "delivered"];
   const filtered = db.sales.filter((s) => {
     const q = salesQuery.trim().toLowerCase();
-    const matchQ = !q || [s.productName, s.customer, s.channel, s.tracking].some((v) => String(v || "").toLowerCase().includes(q));
+    const matchQ = !q || [s.productName, s.customer, s.customerPhone, s.channel, s.tracking].some((v) => String(v || "").toLowerCase().includes(q));
     const matchSt = salesFilter === "All" || s.status === salesFilter;
     return matchQ && matchSt;
   });
 
   return `
+    ${renderWebOrdersAlertHtml()}
+    ${renderSistersCashWalletCardHtml(true)}
+
     <div style="display:flex;gap:8px;align-items:center;">
-      <input type="search" placeholder="🔍 Search customer, outfit, channel…" value="${esc(salesQuery)}" oninput="window.setSalesQuery(this.value)">
+      <input type="search" placeholder="🔍 Search customer, WhatsApp, outfit…" value="${esc(salesQuery)}" oninput="window.setSalesQuery(this.value)">
       <button class="btn btn-gold" style="flex-shrink:0;" onclick="openSaleModal()">＋ Sale</button>
     </div>
     <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
       ${statuses.map((st) => `<button class="btn btn-sm ${salesFilter === st ? 'btn-primary' : 'btn-outline'}" onclick="window.setSalesFilter('${st}')">${st.toUpperCase()}</button>`).join("")}
     </div>
     ${filtered.length === 0 ? `<div class="card" style="text-align:center;color:var(--muted);">No sales recorded yet.</div>` : filtered.map((s) => {
+      const retRefund = (s.returns || []).reduce((a, r) => a + (Number(r.refund) || 0), 0);
+      const netTot = Math.max(0, (Number(s.total) || 0) - retRefund);
       const paid = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
-      const bal = Math.max(0, (Number(s.total) || 0) - paid);
+      const bal = Math.max(0, netTot - paid);
+      const custPhone = s.customerPhone || (db.customers.find((c) => c.id === s.customerId)?.phone) || "";
+      const firstPay = (s.pays || [])[0];
+      const recByLbl = firstPay
+        ? (firstPay.receivedBy === "split"
+            ? `Split (V: ${money(firstPay.vaheedaAmount)} · B: ${money(firstPay.balkeesAmount)})`
+            : (firstPay.receivedBy === "balkees" ? "🌸 Balkees" : "🌷 Vaheeda"))
+        : "Pending";
+
       return `
-        <div class="card">
+        <div class="card" style="${s.isWebOrder && !s.orderSeen ? 'border:2px solid var(--accent);' : ''}">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
             <div>
-              <div style="font-weight:800;font-size:15px;">${esc(s.productName)} × ${s.qty}</div>
-              <div style="font-size:12px;color:var(--muted);">${esc(s.date)} · 👤 ${esc(s.customer || "Walk-in")} · via ${esc(s.channel || "Instagram")}</div>
-              <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">Sold by: <b>${esc(s.seller === "balkees" ? "Balkees" : (s.seller === "both" ? "Both Sisters" : "Vaheeda"))}</b></div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <span style="font-weight:800;font-size:15px;">${esc(s.productName)} × ${s.qty}</span>
+                ${s.isWebOrder ? `<span class="pill" style="background:var(--accent);color:#fff;">🌐 Online Order</span>` : ""}
+              </div>
+              <div style="font-size:12px;color:var(--muted);">${esc(s.date)} · 👤 <b>${esc(s.customer || "Walk-in")}</b> ${custPhone ? `· 📞 ${esc(custPhone)}` : ""} · via ${esc(s.channel || "Instagram")}</div>
+              <div class="pill-row" style="margin-top:4px;">
+                <span class="pill">Sold: ${esc(s.seller === "balkees" ? "Balkees" : (s.seller === "both" ? "Both" : "Vaheeda"))}</span>
+                <span class="pill green">💰 Payment Got By: ${recByLbl}</span>
+              </div>
             </div>
             <div style="text-align:right;">
-              <div style="font-weight:800;font-size:16px;color:var(--accent);">${money(s.total)}</div>
+              <div style="font-weight:800;font-size:16px;color:var(--accent);">${money(netTot)}</div>
+              ${retRefund > 0 ? `<div style="font-size:11px;color:var(--red);">Returned: −${money(retRefund)}</div>` : ""}
               <span class="pill ${bal > 0 ? 'amber' : 'green'}">${bal > 0 ? `Due ${money(bal)}` : "Paid ✓"}</span>
             </div>
           </div>
+
+          ${(s.returns && s.returns.length > 0) ? `
+            <div style="margin-top:8px;padding:7px 10px;background:var(--red-soft);border-radius:10px;font-size:11.5px;">
+              <b>↩️ Sales Returns (${s.returns.length}):</b>
+              ${s.returns.map((r) => `
+                <div>• ${esc(r.date)}: Refund <b>${money(r.refund)}</b> (Restocked: ${r.restock || 0} · ${esc((r.cashFlowMode || "refund").replace(/_/g, " "))})</div>
+              `).join("")}
+            </div>
+          ` : ""}
+
+          <!-- Live Status WhatsApp Bar -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);">
+            <div style="font-size:11px;font-weight:800;color:var(--muted);margin-bottom:5px;">📲 SEND LIVE ORDER STATUS ON WHATSAPP ${custPhone ? `(${esc(custPhone)})` : ""}</div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;">
+              <button class="btn btn-sm ${s.status === 'ordered' ? 'btn-primary' : 'btn-outline'}" onclick="sendLiveOrderStatusWhatsApp('${s.id}', 'ordered')">📥 Order Received</button>
+              <button class="btn btn-sm ${s.status === 'packed' ? 'btn-primary' : 'btn-outline'}" onclick="sendLiveOrderStatusWhatsApp('${s.id}', 'packed')">✨ Prepared / Packed</button>
+              <button class="btn btn-sm ${s.status === 'shipped' ? 'btn-primary' : 'btn-outline'}" onclick="sendLiveOrderStatusWhatsApp('${s.id}', 'shipped')">🚚 Courier Done</button>
+              <button class="btn btn-sm ${s.status === 'delivered' ? 'btn-primary' : 'btn-outline'}" onclick="sendLiveOrderStatusWhatsApp('${s.id}', 'delivered')">🎉 Delivered</button>
+            </div>
+          </div>
+
           <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:space-between;align-items:center;">
             <select style="width:auto;padding:5px 10px;font-size:12px;" onchange="updateSaleStatus('${s.id}', this.value)">
               ${["ordered", "packed", "shipped", "delivered"].map((st) => `<option value="${st}" ${s.status === st ? 'selected' : ''}>Status: ${st.toUpperCase()}</option>`).join("")}
             </select>
-            <div style="display:flex;gap:6px;">
-              ${bal > 0 ? `<button class="btn btn-soft btn-sm" onclick="markSalePaid('${s.id}')">✓ Mark Paid</button>` : ""}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${bal > 0 ? `<button class="btn btn-soft btn-sm" onclick="openReceiveSalePaymentModal('${s.id}')">💰 Receive Pay</button>` : ""}
+              <button class="btn btn-gold btn-sm" onclick="openSalesReturnModal('${s.id}')">↩️ Sales Return</button>
               <button class="btn btn-danger btn-sm" onclick="deleteSaleItem('${s.id}')">🗑</button>
             </div>
           </div>
@@ -1959,25 +2458,34 @@ function renderSalesTab() {
 window.setSalesQuery = (v) => { salesQuery = v; renderApp(); };
 window.setSalesFilter = (st) => { salesFilter = st; renderApp(); };
 
-// ---- Reports & Diagrams Page (8 Visual Diagrams) ----
+// ---- Reports & Diagrams Page (Financial-Friendly P&L + Cash Wallets + 8 Diagrams) ----
 function renderReportsTab() {
   const t = computeTotals();
+  const hidePriv = db.settings.privacy;
   const palette = ["#c85f83", "#b8860b", "#237a57", "#5b4b8a", "#d96b27", "#2b7a9b"];
 
   // 1. Sister Contributions (Vaheeda vs Balkees)
-  function sisterStats(sisId) {
-    const capIn = db.expenses.filter((e) => e.paidBy === sisId && e.category === "Capital Contribution").reduce((a, e) => a + (Number(e.amount) || 0), 0);
-    const expPaid = db.expenses.filter((e) => e.paidBy === sisId && e.category !== "Capital Contribution" && e.category !== "Partner Withdrawal").reduce((a, e) => a + (Number(e.amount) || 0), 0);
-    const withdrawn = db.expenses.filter((e) => e.paidBy === sisId && e.category === "Partner Withdrawal").reduce((a, e) => a + (Number(e.amount) || 0), 0);
+  const wV = t.wallets.vaheeda;
+  const wB = t.wallets.balkees;
+
+  function sisterStats(sisId, w) {
     const salesBy = db.sales.filter((s) => s.seller === sisId).reduce((a, s) => a + (Number(s.total) || 0), 0);
     const stockOwned = db.products.filter((p) => p.owner === sisId).reduce((a, p) => a + (Number(p.cost) || 0) * Math.max(0, Number(p.qty) || 0), 0);
-    const netContrib = capIn + expPaid + stockOwned - withdrawn;
-    return { capIn, expPaid, withdrawn, salesBy, stockOwned, netContrib };
+    const netContrib = w.totalOutOfPocketInvested + stockOwned - w.capitalWithdrawn;
+    return {
+      capIn: w.totalOutOfPocketInvested,
+      expPaid: w.expensesFromAvailableCash + w.expensesNewInvestment,
+      withdrawn: w.capitalWithdrawn,
+      salesBy,
+      stockOwned,
+      netContrib,
+      availableCash: w.availableCash
+    };
   }
-  const vah = sisterStats("vaheeda");
-  const bal = sisterStats("balkees");
-  const totContrib = Math.max(1, vah.netContrib + bal.netContrib);
-  const vahPct = Math.round((vah.netContrib / totContrib) * 100);
+  const vah = sisterStats("vaheeda", wV);
+  const bal = sisterStats("balkees", wB);
+  const totContrib = Math.max(1, Math.max(0, vah.netContrib) + Math.max(0, bal.netContrib));
+  const vahPct = Math.round((Math.max(0, vah.netContrib) / totContrib) * 100);
 
   // 2. Sales by Source / Channel
   const chanMap = {};
@@ -2007,7 +2515,6 @@ function renderReportsTab() {
   db.products.forEach((p) => { const c = p.category || "Kurti"; catStockMap[c] = (catStockMap[c] || 0) + Math.max(0, Number(p.qty) || 0) * (Number(p.price) || 0); });
   const catStockEntries = Object.entries(catStockMap).sort((a, b) => b[1] - a[1]);
 
-  // Helper for Donut HTML
   function buildDonutHtml(entries, centerLabel) {
     const total = entries.reduce((a, x) => a + x[1], 0);
     if (total <= 0) return `<p style="color:var(--muted);font-size:13px;margin:0;">No data recorded yet.</p>`;
@@ -2039,15 +2546,45 @@ function renderReportsTab() {
   }
 
   return `
+    ${renderSistersCashWalletCardHtml(false)}
+
+    <!-- Financial-Friendly Statement Card -->
     <div class="card">
-      <h3 style="margin:0 0 10px;">👭 Vaheeda vs Balkees Contributions & Sales</h3>
+      <h3 style="margin:0 0 10px;">📑 Financial Statement (P&L + Cash Flow Overview)</h3>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;"><span>Gross Sales Revenue:</span><b>${hidePriv ? "••••" : money(t.salesGross)}</b></div>
+        <div style="display:flex;justify-content:space-between;color:var(--red);"><span>Less: Sales Returns / Refunds:</span><b>−${hidePriv ? "••••" : money(t.returnsTotal)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding-top:4px;border-top:1px dashed var(--line);font-weight:800;"><span>Net Sales Revenue:</span><span style="color:var(--accent);">${hidePriv ? "••••" : money(t.revenue)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:var(--muted);"><span>Less: Cost of Goods Sold (COGS):</span><span>−${hidePriv ? "••••" : money(t.cogs)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:var(--muted);"><span>Less: Operating Expenses:</span><span>−${hidePriv ? "••••" : money(t.expenses)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:8px 10px;background:var(--green-soft);border-radius:10px;font-weight:900;color:var(--green);margin-top:4px;">
+          <span>✨ Net Boutique Profit:</span><span>${hidePriv ? "••••" : money(t.netProfit)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+          <div class="kpi-box">
+            <div class="kpi-label">NET PURCHASES</div>
+            <div class="kpi-val" style="font-size:15px;">${hidePriv ? "••••" : money(t.purchasesNet)}</div>
+            <div class="kpi-sub">Returns: ${money(t.purchaseReturnsTotal)}</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">CUSTOMER DUES</div>
+            <div class="kpi-val" style="font-size:15px;color:var(--amber);">${hidePriv ? "••••" : money(t.due)}</div>
+            <div class="kpi-sub">Collected: ${money(t.received)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px;">👭 Vaheeda vs Balkees Contributions & Wallets</h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
         <div class="kpi-box">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
             ${getAccountAvatarHtml("vaheeda")}
             <b>Vaheeda</b>
           </div>
-          <div style="font-size:12px;color:var(--muted);">Net Contribution: <b>${money(vah.netContrib)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">Cash in Hand: <b style="color:var(--green);">${money(vah.availableCash)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">New Investment: <b>${money(vah.capIn)}</b></div>
           <div style="font-size:12px;color:var(--muted);">Expenses Paid: <b>${money(vah.expPaid)}</b></div>
           <div style="font-size:12px;color:var(--muted);">Sales Closed: <b>${money(vah.salesBy)}</b></div>
         </div>
@@ -2056,7 +2593,8 @@ function renderReportsTab() {
             ${getAccountAvatarHtml("balkees")}
             <b>Balkees</b>
           </div>
-          <div style="font-size:12px;color:var(--muted);">Net Contribution: <b>${money(bal.netContrib)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">Cash in Hand: <b style="color:var(--green);">${money(bal.availableCash)}</b></div>
+          <div style="font-size:12px;color:var(--muted);">New Investment: <b>${money(bal.capIn)}</b></div>
           <div style="font-size:12px;color:var(--muted);">Expenses Paid: <b>${money(bal.expPaid)}</b></div>
           <div style="font-size:12px;color:var(--muted);">Sales Closed: <b>${money(bal.salesBy)}</b></div>
         </div>
@@ -2107,33 +2645,44 @@ function renderReportsTab() {
   `;
 }
 
-// ---- Money (Expenses & Contributions) Tab ----
+// ---- Money (Expenses, Split Expenses & Contributions) Tab ----
 function renderMoneyTab() {
   return `
+    ${renderSistersCashWalletCardHtml(false)}
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;">
-      <button class="btn btn-primary" onclick="openExpenseModal('expense')">＋ Add Expense</button>
+      <button class="btn btn-primary" onclick="openExpenseModal('expense')">＋ Add Expense (Single / Split)</button>
       <button class="btn btn-gold" onclick="openExpenseModal('capital')">💰 Add Contribution</button>
     </div>
 
     <div class="card">
       <h3 style="margin:0 0 10px;">📒 Recent Expenses & Contributions (${db.expenses.length})</h3>
-      ${db.expenses.length === 0 ? `<p style="color:var(--muted);margin:0;">No expenses or capital entries yet.</p>` : db.expenses.map((e) => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);gap:8px;">
-          <div style="flex:1;">
-            <div style="font-weight:700;">${esc(e.title)}</div>
-            <div style="font-size:12px;color:var(--muted);">${esc(e.date)} · ${esc(e.category)} · by <b>${esc(e.paidBy === "balkees" ? "Balkees" : "Vaheeda")}</b></div>
+      ${db.expenses.length === 0 ? `<p style="color:var(--muted);margin:0;">No expenses or capital entries yet.</p>` : db.expenses.map((e) => {
+        const paidLabel = e.paidBy === "split"
+          ? `👭 Split (Vaheeda: ${money(e.vaheedaPaid)} · Balkees: ${money(e.balkeesPaid)})`
+          : (e.paidBy === "balkees" ? "🌸 Balkees" : "🌷 Vaheeda");
+        const srcLabel = e.category === "Capital Contribution" || e.category === "Partner Withdrawal"
+          ? e.category
+          : ((e.fundingSource || "available_cash") === "new_investment" ? "💎 New Investment" : "💰 From Sales Cash");
+        return `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);gap:8px;">
+            <div style="flex:1;">
+              <div style="font-weight:700;">${esc(e.title)}</div>
+              <div style="font-size:12px;color:var(--muted);">${esc(e.date)} · ${esc(e.category)} · <b>${paidLabel}</b></div>
+              <div style="margin-top:3px;"><span class="pill ${e.fundingSource === 'new_investment' ? 'amber' : 'green'}">${esc(srcLabel)}</span></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="font-weight:800;color:var(--accent);">${money(e.amount)}</div>
+              <button class="btn btn-danger btn-sm" onclick="deleteExpenseItem('${e.id}')">🗑</button>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div style="font-weight:800;color:var(--accent);">${money(e.amount)}</div>
-            <button class="btn btn-danger btn-sm" onclick="deleteExpenseItem('${e.id}')">🗑</button>
-          </div>
-        </div>
-      `).join("")}
+        `;
+      }).join("")}
     </div>
   `;
 }
 
-// ---- Complete Settings Tab with all 5 Expandable Settings Blocks ----
+// ---- Complete Settings Tab with App Logo Upload (with Crop) & 5 Admin Blocks ----
 const ACCENT_SWATCHES = ["#c85f83", "#9b6bd6", "#e0687a", "#d98a3d", "#3f9d86", "#4a86d6", "#7a5c4a", "#2f2a30"];
 const CURRENCY_OPTIONS = [
   ["INR", "₹ Indian Rupee (INR)"],
@@ -2175,7 +2724,7 @@ function renderChipEditorHtml(key, title, placeholder) {
 function renderMoreSettingsTab() {
   const isAdmin = currentAccount && currentAccount.isAdmin;
   const s = db.settings;
-  const logoEntry = s.logoAt ? imgMap.get("logo") : null;
+  const logoEntry = imgMap.get("logo");
   const myProfileImg = imgMap.get("profile_" + currentAccount.id);
   const channels = Array.isArray(s.channels) && s.channels.length ? s.channels : DEFAULT_SETTINGS.channels;
 
@@ -2198,7 +2747,7 @@ function renderMoreSettingsTab() {
               </label>
               ${myProfileImg && myProfileImg.data ? `<button class="btn btn-outline btn-sm" onclick="recropExistingProfilePhoto('${currentAccount.id}')">✂️ Crop / Rotate</button>` : ""}
               <button class="btn btn-outline btn-sm" onclick="pullFromFirebase()">⟳ Sync Now</button>
-              <button class="btn btn-outline btn-sm" onclick="lockAndSwitchAccount()">🔒 Switch Account</button>
+              <button class="btn btn-outline btn-sm" onclick="signOutAccount()">🔒 Switch Account</button>
             </div>
           </div>
         </div>
@@ -2219,10 +2768,33 @@ function renderMoreSettingsTab() {
       </div>
     </details>
 
-    <!-- Look & feel -->
-    <details class="set-block">
-      <summary>🎨 Look & feel</summary>
+    <!-- Look & feel + Boutique App Logo Upload (with Crop) -->
+    <details class="set-block" open>
+      <summary>🎨 Look & feel + App Logo</summary>
       <div class="set-body">
+        <!-- App Logo Upload with Interactive Crop & Rotate -->
+        <div class="card" style="background:var(--bg);padding:12px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="shop-logo" style="width:58px;height:58px;border-radius:16px;font-size:24px;">
+              ${logoEntry && logoEntry.data ? `<img src="${logoEntry.data}">` : esc(s.logo || "S")}
+            </div>
+            <div style="flex:1;">
+              <div style="font-weight:800;font-size:14px;">🏷️ Boutique App Logo (with Crop)</div>
+              <div style="font-size:11.5px;color:var(--muted);">Shown on App Header, Login Screen & Customer Catalogue</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">
+                <label class="btn btn-primary btn-sm" style="display:inline-flex;">
+                  🖼 Upload & Crop Logo
+                  <input type="file" accept="image/*" style="display:none;" onchange="uploadLogoImage(this.files[0])">
+                </label>
+                ${logoEntry && logoEntry.data ? `
+                  <button class="btn btn-outline btn-sm" onclick="recropExistingLogoImage()">✂️ Re-Crop / Rotate</button>
+                  <button class="btn btn-danger btn-sm" onclick="removeLogoImage()">✕ Remove</button>
+                ` : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="field-row">
           <div class="field">
             <label>Theme</label>
@@ -2289,7 +2861,7 @@ function renderMoreSettingsTab() {
     ${!isAdmin ? `
       <div class="card" style="background:var(--gold-soft);border-color:#e6c97a;">
         <div style="font-size:12.5px;color:#6e4e08;">
-          🌷 <b>Sister Application Settings Mode (${esc(currentAccount.displayName)}):</b> Application look & feel, your profile photo, and your PIN are available above. Boutique administration blocks (<b>Names & greetings</b>, <b>Money & Defaults</b>, <b>Your Lists</b>, <b>Home & privacy</b>, <b>Backup & Restore</b>) are unlocked under the <b>Admin</b> account.
+          🌷 <b>Sister Application Settings Mode (${esc(currentAccount.displayName)}):</b> Application look & feel, app logo, your profile photo, and your PIN are available above. Boutique administration blocks (<b>Names & greetings</b>, <b>Money & Defaults</b>, <b>Your Lists</b>, <b>Home & privacy</b>, <b>Backup & Restore</b>) are unlocked under the <b>Admin</b> account.
         </div>
       </div>
     ` : `
@@ -2830,6 +3402,23 @@ window.uploadLogoImage = async function(file) {
   }, "✂️ Crop & Rotate Boutique Logo");
 };
 
+window.recropExistingLogoImage = function() {
+  const im = imgMap.get("logo");
+  if (!im || !im.data) return showToast("Upload a logo image first");
+  openCropRotateModal(im.data, "square", async (croppedUrl) => {
+    const now = Date.now();
+    await putLocalImage("logo", croppedUrl, now, false);
+    db.settings.logoAt = now;
+    db.settings._u = now;
+    saveLocalDb();
+    outbox.add("settings");
+    saveOutbox();
+    pushOutboxToFirebase();
+    renderApp();
+    showToast("Logo cropped & rotated ✨");
+  }, "✂️ Crop & Rotate Boutique Logo");
+};
+
 window.removeLogoImage = async function() {
   await deleteLocalImage("logo");
   db.settings.logoAt = 0;
@@ -2912,6 +3501,7 @@ window.restoreBackupFromJson = function(file) {
       if (!src || typeof src !== "object") throw new Error("Invalid backup file");
       if (Array.isArray(src.products)) db.products = src.products;
       if (Array.isArray(src.sales)) db.sales = src.sales;
+      if (Array.isArray(src.purchases)) db.purchases = src.purchases;
       if (Array.isArray(src.expenses)) db.expenses = src.expenses;
       if (Array.isArray(src.customers)) db.customers = src.customers;
       if (Array.isArray(src.settlements)) db.settlements = src.settlements;
@@ -2942,12 +3532,12 @@ window.exportCsv = function(kind) {
     rows.push(["Date", "Product", "Qty", "Unit Price", "Discount", "Total", "Paid", "Customer", "Phone", "Channel", "Status", "Sold By"]);
     db.sales.forEach((s) => {
       const total = (Number(s.qty) || 1) * (Number(s.unitPrice) || 0) - (Number(s.discount) || 0);
-      rows.push([s.date, s.productName, s.qty, s.unitPrice, s.discount || 0, total, s.paidAmount || 0, s.customer, s.phone, s.channel, s.status, s.soldBy]);
+      rows.push([s.date, s.productName, s.qty, s.unitPrice, s.discount || 0, total, s.paidAmount || 0, s.customer, s.customerPhone || s.phone, s.channel, s.status, s.soldBy]);
     });
   } else if (kind === "stock") {
-    rows.push(["Code", "Name", "Category", "Sizes", "Colours", "Cost", "Selling Price", "Qty", "Low Alert"]);
+    rows.push(["Code", "Name", "Category", "Sizes", "Colours", "Cost", "Selling Price", "Qty", "Low Alert", "Archived"]);
     db.products.forEach((p) => {
-      rows.push([p.code, p.name, p.category, p.variant, p.color, p.cost, p.price, p.qty, p.low]);
+      rows.push([p.code, p.name, p.category, p.variant, p.color, p.cost, p.price, p.qty, p.low, Boolean(p.archived)]);
     });
   } else if (kind === "expenses") {
     rows.push(["Date", "Title", "Category", "Type", "Amount", "Paid By", "Notes"]);
@@ -3016,7 +3606,131 @@ window.recropExistingProfilePhoto = function(accId) {
   }, `✂️ Crop & Rotate Profile Photo (${accId.toUpperCase()})`);
 };
 
-// ---- Add / Edit Product Modal (with Multiple Photo Upload + Crop & Rotate) ----
+// ---- Split Payment Popup Modal (Both Sisters Vaheeda & Balkees) ----
+let _splitPopupState = null;
+
+window.openSplitAmountPopup = function(titleText, totalAmt, initVaheeda, initBalkees, onConfirm) {
+  const tot = Math.max(0, Number(totalAmt) || 0);
+  let vAmt = Number(initVaheeda) || 0;
+  let bAmt = Number(initBalkees) || 0;
+  if (vAmt + bAmt <= 0 && tot > 0) {
+    vAmt = Math.round((tot / 2) * 100) / 100;
+    bAmt = Math.max(0, Math.round((tot - vAmt) * 100) / 100);
+  }
+  _splitPopupState = {
+    titleText: titleText || "👭 Split Amount Between Vaheeda & Balkees",
+    totalAmt: tot,
+    vAmt,
+    bAmt,
+    onConfirm,
+    prevHtml: document.getElementById("modalRoot")?.innerHTML || ""
+  };
+  renderSplitAmountPopupDom();
+};
+
+function renderSplitAmountPopupDom() {
+  if (!_splitPopupState) return;
+  const st = _splitPopupState;
+  const wallets = computeSisterCashWallets();
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" style="z-index:270;">
+      <div class="modal-sheet" style="max-width:440px;">
+        <div class="modal-head">
+          <h3>${esc(st.titleText)}</h3>
+          <button onclick="cancelSplitAmountPopup()" style="font-size:20px;">✕</button>
+        </div>
+
+        <div class="card" style="background:var(--accent-soft);margin-bottom:12px;padding:10px 12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;font-weight:800;">Total Amount to Split:</span>
+            <span style="font-size:17px;font-weight:900;color:var(--accent);">${money(st.totalAmt)}</span>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button class="btn btn-soft btn-sm" style="flex:1;" onclick="setSplitPreset(0.5)">50% / 50% Equal</button>
+            <button class="btn btn-outline btn-sm" onclick="setSplitPreset(1)">100% Vaheeda</button>
+            <button class="btn btn-outline btn-sm" onclick="setSplitPreset(0)">100% Balkees</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>🌷 Vaheeda Amount (Available Cash: ${money(wallets.vaheeda.availableCash)})</label>
+          <input id="splitVahInput" type="number" inputmode="decimal" value="${st.vAmt}" oninput="onSplitInputChanged('vaheeda', this.value)">
+        </div>
+
+        <div class="field">
+          <label>🌸 Balkees Amount (Available Cash: ${money(wallets.balkees.availableCash)})</label>
+          <input id="splitBalInput" type="number" inputmode="decimal" value="${st.bAmt}" oninput="onSplitInputChanged('balkees', this.value)">
+        </div>
+
+        <div id="splitSumStatus" style="font-size:12.5px;font-weight:800;color:var(--green);margin-bottom:12px;">
+          Sum: ${money(st.vAmt + st.bAmt)} (Vaheeda: ${money(st.vAmt)} + Balkees: ${money(st.bAmt)})
+        </div>
+
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline" onclick="cancelSplitAmountPopup()">Cancel</button>
+          <button class="btn btn-primary" style="flex:1;" onclick="confirmSplitAmountPopup()">✓ Confirm Split</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.setSplitPreset = function(vahRatio) {
+  if (!_splitPopupState) return;
+  const tot = _splitPopupState.totalAmt || (Number(document.getElementById("splitVahInput")?.value || 0) + Number(document.getElementById("splitBalInput")?.value || 0));
+  _splitPopupState.vAmt = Math.round(tot * vahRatio * 100) / 100;
+  _splitPopupState.bAmt = Math.max(0, Math.round((tot - _splitPopupState.vAmt) * 100) / 100);
+  renderSplitAmountPopupDom();
+};
+
+window.onSplitInputChanged = function(who, val) {
+  if (!_splitPopupState) return;
+  const num = Math.max(0, Number(val) || 0);
+  const tot = _splitPopupState.totalAmt;
+  if (who === "vaheeda") {
+    _splitPopupState.vAmt = num;
+    if (tot > 0) {
+      _splitPopupState.bAmt = Math.max(0, Math.round((tot - num) * 100) / 100);
+      const bEl = document.getElementById("splitBalInput");
+      if (bEl) bEl.value = _splitPopupState.bAmt;
+    }
+  } else {
+    _splitPopupState.bAmt = num;
+    if (tot > 0) {
+      _splitPopupState.vAmt = Math.max(0, Math.round((tot - num) * 100) / 100);
+      const vEl = document.getElementById("splitVahInput");
+      if (vEl) vEl.value = _splitPopupState.vAmt;
+    }
+  }
+  const stEl = document.getElementById("splitSumStatus");
+  if (stEl) {
+    const sum = _splitPopupState.vAmt + _splitPopupState.bAmt;
+    stEl.textContent = `Sum: ${money(sum)} (Vaheeda: ${money(_splitPopupState.vAmt)} + Balkees: ${money(_splitPopupState.bAmt)})`;
+  }
+};
+
+window.cancelSplitAmountPopup = function() {
+  const prev = _splitPopupState?.prevHtml || "";
+  _splitPopupState = null;
+  const modalRoot = document.getElementById("modalRoot");
+  if (modalRoot) modalRoot.innerHTML = prev;
+};
+
+window.confirmSplitAmountPopup = function() {
+  if (!_splitPopupState) return;
+  const v = Math.max(0, Number(document.getElementById("splitVahInput")?.value) || 0);
+  const b = Math.max(0, Number(document.getElementById("splitBalInput")?.value) || 0);
+  if (v + b <= 0) return showToast("Enter split amounts for Vaheeda & Balkees");
+  const cb = _splitPopupState.onConfirm;
+  const prev = _splitPopupState.prevHtml || "";
+  _splitPopupState = null;
+  const modalRoot = document.getElementById("modalRoot");
+  if (modalRoot) modalRoot.innerHTML = prev;
+  if (typeof cb === "function") cb(v, b);
+};
+
+// ---- Add / Edit Product Modal (with Multiple Photo Upload + Crop & Rotate + Archive Toggle) ----
 let draftPhotos = []; // Array of { id, data }
 let editingProdId = null;
 
@@ -3048,12 +3762,13 @@ function readCurrentProductDraftForm() {
     color: document.getElementById("pCol")?.value || "",
     cost: document.getElementById("pCost")?.value || "",
     price: document.getElementById("pPrice")?.value || "",
-    owner: document.getElementById("pOwner")?.value || "joint"
+    owner: document.getElementById("pOwner")?.value || "joint",
+    archived: Boolean(document.getElementById("pArchived")?.checked)
   };
 }
 
 function renderProductModalDom(existing) {
-  const p = existing || { name: "", code: "", category: "Kurti", variant: "M, L, XL", color: "", cost: "", price: "", qty: 1, low: 2, owner: "joint", notes: "" };
+  const p = existing || { name: "", code: "", category: "Kurti", variant: "M, L, XL", color: "", cost: "", price: "", qty: 1, low: 2, owner: "joint", notes: "", archived: false };
   const modalRoot = document.getElementById("modalRoot");
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -3139,6 +3854,14 @@ function renderProductModalDom(existing) {
           </select>
         </div>
 
+        <div class="toggle-row" style="padding:10px 12px;background:var(--bg);border-radius:12px;margin-top:6px;">
+          <div>
+            <div style="font-weight:800;font-size:13px;">🙈 Archive / Hide from Customer Catalogue</div>
+            <div style="font-size:11.5px;color:var(--muted);">Keep in your stock list but hide from customers viewing the shared catalogue</div>
+          </div>
+          <input id="pArchived" type="checkbox" style="width:20px;height:20px;" ${p.archived ? 'checked' : ''}>
+        </div>
+
         <div style="display:flex;gap:8px;margin-top:14px;">
           ${editingProdId ? `<button class="btn btn-danger" onclick="deleteProductById('${editingProdId}')">🗑 Delete</button>` : ""}
           <button class="btn btn-primary" style="flex:1;" onclick="saveProductFromModal()">💾 Save Outfit</button>
@@ -3195,7 +3918,6 @@ window.saveProductFromModal = async function() {
   const now = Date.now();
   const id = window._draftProdBaseId;
 
-  // Ensure first photo uses product ID as key for backward compatibility with cover lookup
   if (draftPhotos.length > 0 && draftPhotos[0].id !== id) {
     draftPhotos[0].id = id;
   }
@@ -3216,6 +3938,7 @@ window.saveProductFromModal = async function() {
     qty: Number(document.getElementById("pQty")?.value) || 0,
     low: 2,
     owner: document.getElementById("pOwner")?.value || "joint",
+    archived: Boolean(document.getElementById("pArchived")?.checked),
     notes: "",
     imgAt: photoIds.length ? now : 0,
     photoIds,
@@ -3262,6 +3985,10 @@ function executeApprovedDeletion(targetType, targetId) {
     db.sales = db.sales.filter((x) => x.id !== targetId);
     db.tombs.push({ c: "sales", id: targetId, _u: now });
     outbox.add(`sales/${targetId}`);
+  } else if (targetType === "purchase") {
+    db.purchases = (db.purchases || []).filter((x) => x.id !== targetId);
+    db.tombs.push({ c: "purchases", id: targetId, _u: now });
+    outbox.add(`purchases/${targetId}`);
   } else if (targetType === "expense") {
     db.expenses = db.expenses.filter((x) => x.id !== targetId);
     db.tombs.push({ c: "expenses", id: targetId, _u: now });
@@ -3391,6 +4118,12 @@ window.deleteProductById = function(prodId) {
   requestDeleteApproval("product", prodId, `${p.name} (${money(p.price)})`);
 };
 
+window.deletePurchaseItem = function(purId) {
+  const pur = (db.purchases || []).find((x) => x.id === purId);
+  if (!pur) return;
+  requestDeleteApproval("purchase", purId, `${pur.itemsSummary || pur.supplier || "Purchase"} (${money(pur.totalAmount)})`);
+};
+
 // ---- Live Customer Catalogue Share Helpers ----
 window.getLiveCatalogueUrl = function() {
   const baseUrl = window.location.origin.startsWith("http")
@@ -3400,7 +4133,7 @@ window.getLiveCatalogueUrl = function() {
 };
 
 window.buildLiveCatalogueShareMessage = function() {
-  const inStock = db.products.filter((p) => (Number(p.qty) || 0) > 0).length;
+  const inStock = db.products.filter((p) => (Number(p.qty) || 0) > 0 && !p.archived).length;
   const url = getLiveCatalogueUrl();
   return `✨ *${db.settings.shopName || "SISORA Boutique"} — Live Collection Catalogue* ✨\n👗 *${inStock} Outfits Available in Live Stock*\n\n📸 Tap any photo to view full screen, select *single or multiple outfits*, and tap *Make Order* directly:\n🔗 ${url}`;
 };
@@ -3429,6 +4162,15 @@ window.openProductGallery = function(prodId) {
   const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : [p.id];
   const urls = ids.map((id) => imgMap.get(id)?.data).filter(Boolean);
   if (!urls.length) return showToast("No photos uploaded for this outfit yet");
+  openLightbox(urls, 0);
+};
+
+window.openPurchaseInvoiceGallery = function(purId) {
+  const pur = (db.purchases || []).find((x) => x.id === purId);
+  if (!pur) return;
+  const ids = Array.isArray(pur.invoicePhotoIds) ? pur.invoicePhotoIds : [];
+  const urls = ids.map((id) => imgMap.get(id)?.data).filter(Boolean);
+  if (!urls.length) return showToast("No invoice photos uploaded for this purchase");
   openLightbox(urls, 0);
 };
 
@@ -3540,7 +4282,6 @@ window.executeCustomerShare = async function(prodId, shareId, tempUrl) {
   const text = document.getElementById("sharePreviewBox")?.innerText || tempUrl;
   closeModal();
 
-  // Try native iOS Web Share API with photos if supported
   if (navigator.share) {
     try {
       const files = [];
@@ -3563,19 +4304,458 @@ window.executeCustomerShare = async function(prodId, shareId, tempUrl) {
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
 };
 
-// ---- Record Sale Modal ----
-window.openSaleModal = function() {
+// ---- Purchase Entry Modal (with Split Payment Popup, Invoice Upload & Funding Source) ----
+let _draftPurState = null;
+
+window.openPurchaseModal = function(purId = null) {
+  const existing = purId ? (db.purchases || []).find((x) => x.id === purId) : null;
+  const baseId = existing ? existing.id : ("pur_" + uid());
+  const invoices = [];
+  if (existing && Array.isArray(existing.invoicePhotoIds)) {
+    existing.invoicePhotoIds.forEach((iid) => {
+      const im = imgMap.get(iid);
+      if (im && im.data) invoices.push({ id: iid, data: im.data });
+    });
+  }
+  _draftPurState = {
+    isEdit: Boolean(existing),
+    id: baseId,
+    supplier: existing?.supplier || "",
+    invoiceNo: existing?.invoiceNo || "",
+    itemsSummary: existing?.itemsSummary || existing?.productName || "",
+    productId: existing?.productId || "",
+    qty: existing?.qty ?? 1,
+    totalAmount: existing?.totalAmount || "",
+    paidBy: existing?.paidBy || (currentAccount?.id === "balkees" ? "balkees" : "vaheeda"),
+    vaheedaPaid: existing?.vaheedaPaid || 0,
+    balkeesPaid: existing?.balkeesPaid || 0,
+    fundingSource: existing?.fundingSource || "available_cash",
+    method: existing?.method || "UPI / GPay",
+    date: existing?.date || todayIso(),
+    notes: existing?.notes || "",
+    invoices
+  };
+  renderPurchaseModalDom();
+};
+
+function syncDraftPurFieldsFromDom() {
+  if (!_draftPurState) return;
+  _draftPurState.supplier = document.getElementById("purSupplier")?.value ?? _draftPurState.supplier;
+  _draftPurState.invoiceNo = document.getElementById("purInvNo")?.value ?? _draftPurState.invoiceNo;
+  _draftPurState.itemsSummary = document.getElementById("purDesc")?.value ?? _draftPurState.itemsSummary;
+  _draftPurState.productId = document.getElementById("purProdId")?.value ?? _draftPurState.productId;
+  _draftPurState.qty = Number(document.getElementById("purQty")?.value ?? _draftPurState.qty) || 1;
+  _draftPurState.totalAmount = document.getElementById("purAmt")?.value ?? _draftPurState.totalAmount;
+  _draftPurState.fundingSource = document.getElementById("purFundSrc")?.value ?? _draftPurState.fundingSource;
+  _draftPurState.method = document.getElementById("purMethod")?.value ?? _draftPurState.method;
+  _draftPurState.date = document.getElementById("purDate")?.value ?? _draftPurState.date;
+  _draftPurState.notes = document.getElementById("purNotes")?.value ?? _draftPurState.notes;
+}
+
+function renderPurchaseModalDom() {
+  if (!_draftPurState) return;
+  const st = _draftPurState;
+  const wallets = computeSisterCashWallets();
   const modalRoot = document.getElementById("modalRoot");
-  const firstProd = db.products[0];
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>🛍️ Record Sale</h3>
+          <h3>${st.isEdit ? "✏️ Edit Purchase Bill" : "📦 New Purchase Entry"}</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
         </div>
+
+        <div class="card" style="background:var(--accent-soft);padding:9px 12px;margin-bottom:10px;font-size:12px;">
+          <b>💰 Available Sales Cash:</b> Vaheeda: <b>${money(wallets.vaheeda.availableCash)}</b> · Balkees: <b>${money(wallets.balkees.availableCash)}</b>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Supplier / Wholesaler *</label>
+            <input id="purSupplier" value="${esc(st.supplier)}" placeholder="e.g. Surat Textile Hub">
+          </div>
+          <div class="field">
+            <label>Invoice / Bill No.</label>
+            <input id="purInvNo" value="${esc(st.invoiceNo)}" placeholder="e.g. INV-204">
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Items Description *</label>
+            <input id="purDesc" value="${esc(st.itemsSummary)}" placeholder="e.g. 20 pcs Festive Kurtis">
+          </div>
+          <div class="field">
+            <label>Restock Outfit (Optional)</label>
+            <select id="purProdId">
+              <option value="">— General Stock Bill —</option>
+              ${db.products.map((p) => `<option value="${p.id}" ${st.productId === p.id ? 'selected' : ''}>${esc(p.name)} (${p.qty} in stock)</option>`).join("")}
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Total Bill Amount (₹) *</label>
+            <input id="purAmt" type="number" inputmode="decimal" value="${st.totalAmount}" placeholder="0">
+          </div>
+          <div class="field">
+            <label>Quantity (pcs)</label>
+            <input id="purQty" type="number" inputmode="numeric" value="${st.qty}">
+          </div>
+        </div>
+
         <div class="field">
-          <label>Select Outfit</label>
+          <label>💎 Purchase Funding Source (Next Purchase Option)</label>
+          <select id="purFundSrc">
+            <option value="available_cash" ${st.fundingSource === 'available_cash' ? 'selected' : ''}>💰 From Available Cash via Sales (Deducts from Sister's Cash Wallet)</option>
+            <option value="new_investment" ${st.fundingSource === 'new_investment' ? 'selected' : ''}>💎 New Investment — Out of Pocket (Adds to Sister's Capital)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>👭 Paid By Sister (Select Split to open popup for both sisters)</label>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+            <button type="button" class="btn btn-sm ${st.paidBy === 'vaheeda' ? 'btn-primary' : 'btn-outline'}" onclick="selectPurchasePaidBy('vaheeda')">🌷 Vaheeda</button>
+            <button type="button" class="btn btn-sm ${st.paidBy === 'balkees' ? 'btn-primary' : 'btn-outline'}" onclick="selectPurchasePaidBy('balkees')">🌸 Balkees</button>
+            <button type="button" class="btn btn-sm ${st.paidBy === 'split' ? 'btn-primary' : 'btn-gold'}" onclick="selectPurchasePaidBy('split')">👭 Split Popup</button>
+          </div>
+          ${st.paidBy === "split" ? `
+            <div style="margin-top:6px;padding:8px 10px;background:var(--bg);border-radius:10px;display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+              <span>🌷 Vaheeda: <b>${money(st.vaheedaPaid)}</b> · 🌸 Balkees: <b>${money(st.balkeesPaid)}</b></span>
+              <button type="button" class="btn btn-soft btn-sm" onclick="selectPurchasePaidBy('split')">✏️ Edit Split</button>
+            </div>
+          ` : ""}
+        </div>
+
+        <!-- Invoice Upload -->
+        <div class="field">
+          <label>🧾 Upload Supplier Invoice / Bill Photos (${st.invoices.length})</label>
+          <div style="display:flex;gap:8px;overflow-x:auto;align-items:center;padding-bottom:4px;">
+            <label class="btn btn-soft btn-sm" style="height:68px;min-width:90px;flex-direction:column;">
+              <span>📸 Upload Bill</span>
+              <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseInvoiceFiles(this.files)">
+            </label>
+            ${st.invoices.map((inv, idx) => `
+              <div style="position:relative;width:68px;height:68px;border-radius:10px;overflow:hidden;border:1.5px solid var(--accent);flex-shrink:0;">
+                <img src="${inv.data}" style="width:100%;height:100%;object-fit:cover;" onclick="openLightbox(['${inv.data}'], 0)">
+                <button type="button" onclick="cropPurchaseInvoiceAtIndex(${idx})" style="position:absolute;bottom:2px;left:2px;background:rgba(200,95,131,0.9);color:#fff;font-size:9px;padding:1px 4px;border-radius:4px;">✂️</button>
+                <button type="button" onclick="removePurchaseInvoiceAtIndex(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.9);color:#fff;width:16px;height:16px;border-radius:50%;font-size:9px;">✕</button>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Payment Mode</label>
+            <select id="purMethod">
+              ${(db.settings.payMethods || DEFAULT_SETTINGS.payMethods).map((m) => `<option value="${esc(m)}" ${st.method === m ? 'selected' : ''}>${esc(m)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Date</label>
+            <input id="purDate" type="date" value="${esc(st.date)}">
+          </div>
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="savePurchaseFromModal()">💾 Save Purchase Entry</button>
+      </div>
+    </div>
+  `;
+}
+
+window.selectPurchasePaidBy = function(mode) {
+  syncDraftPurFieldsFromDom();
+  if (!_draftPurState) return;
+  if (mode === "split") {
+    const tot = Number(_draftPurState.totalAmount) || 0;
+    openSplitAmountPopup(
+      "👭 Split Purchase Between Vaheeda & Balkees",
+      tot,
+      _draftPurState.vaheedaPaid,
+      _draftPurState.balkeesPaid,
+      (vAmt, bAmt) => {
+        _draftPurState.paidBy = "split";
+        _draftPurState.vaheedaPaid = vAmt;
+        _draftPurState.balkeesPaid = bAmt;
+        if (!Number(_draftPurState.totalAmount)) _draftPurState.totalAmount = vAmt + bAmt;
+        renderPurchaseModalDom();
+      }
+    );
+  } else {
+    _draftPurState.paidBy = mode;
+    renderPurchaseModalDom();
+  }
+};
+
+window.handlePurchaseInvoiceFiles = async function(fileList) {
+  if (!fileList || !fileList.length || !_draftPurState) return;
+  syncDraftPurFieldsFromDom();
+  for (const file of Array.from(fileList)) {
+    const dataUrl = await compressImageFile(file, 1080, 0.85);
+    const invId = `inv_${_draftPurState.id}_${uid().slice(-4)}`;
+    _draftPurState.invoices.push({ id: invId, data: dataUrl });
+  }
+  renderPurchaseModalDom();
+  showToast("Invoice photo added 🧾");
+};
+
+window.cropPurchaseInvoiceAtIndex = function(idx) {
+  if (!_draftPurState || !_draftPurState.invoices[idx]) return;
+  syncDraftPurFieldsFromDom();
+  const inv = _draftPurState.invoices[idx];
+  openCropRotateModal(inv.data, "free", (croppedUrl) => {
+    _draftPurState.invoices[idx].data = croppedUrl;
+    renderPurchaseModalDom();
+  }, "✂️ Crop & Rotate Invoice");
+};
+
+window.removePurchaseInvoiceAtIndex = function(idx) {
+  if (!_draftPurState) return;
+  syncDraftPurFieldsFromDom();
+  _draftPurState.invoices.splice(idx, 1);
+  renderPurchaseModalDom();
+};
+
+window.savePurchaseFromModal = async function() {
+  syncDraftPurFieldsFromDom();
+  const st = _draftPurState;
+  if (!st) return;
+  const totalAmount = Number(st.totalAmount) || 0;
+  if (totalAmount <= 0) return showToast("Please enter total purchase bill amount");
+
+  const now = Date.now();
+  const invoicePhotoIds = st.invoices.map((x) => x.id);
+  for (const inv of st.invoices) {
+    await putLocalImage(inv.id, inv.data, now, false);
+  }
+
+  let vPaid = 0, bPaid = 0;
+  if (st.paidBy === "split") {
+    vPaid = Number(st.vaheedaPaid) || (totalAmount / 2);
+    bPaid = Number(st.balkeesPaid) || (totalAmount - vPaid);
+  } else if (st.paidBy === "balkees") {
+    bPaid = totalAmount;
+  } else {
+    vPaid = totalAmount;
+  }
+
+  const linkedProd = st.productId ? db.products.find((p) => p.id === st.productId) : null;
+  if (!st.isEdit && linkedProd && st.qty > 0) {
+    linkedProd.qty = (Number(linkedProd.qty) || 0) + st.qty;
+    linkedProd._u = now;
+    outbox.add(`products/${linkedProd.id}`);
+  }
+
+  const existing = (db.purchases || []).find((x) => x.id === st.id);
+  const record = {
+    id: st.id,
+    supplier: (st.supplier || "").trim() || "Wholesale Supplier",
+    invoiceNo: (st.invoiceNo || "").trim(),
+    productId: st.productId || "",
+    productName: linkedProd ? linkedProd.name : (st.itemsSummary || "Stock Purchase"),
+    itemsSummary: (st.itemsSummary || "").trim() || (linkedProd ? linkedProd.name : "Stock Purchase"),
+    qty: Math.max(1, Number(st.qty) || 1),
+    unitCost: Math.round((totalAmount / Math.max(1, Number(st.qty) || 1)) * 100) / 100,
+    totalAmount,
+    paidBy: st.paidBy,
+    vaheedaPaid: vPaid,
+    balkeesPaid: bPaid,
+    fundingSource: st.fundingSource || "available_cash",
+    method: st.method || "UPI / GPay",
+    date: st.date || todayIso(),
+    notes: st.notes || "",
+    invoicePhotoIds,
+    returns: existing?.returns || [],
+    createdAt: existing?.createdAt || nowIso(),
+    _u: now
+  };
+
+  if (!Array.isArray(db.purchases)) db.purchases = [];
+  const idx = db.purchases.findIndex((x) => x.id === st.id);
+  if (idx >= 0) db.purchases[idx] = record;
+  else db.purchases.unshift(record);
+
+  _draftPurState = null;
+  saveLocalDb();
+  outbox.add(`purchases/${record.id}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Purchase bill saved & synced 📦");
+};
+
+// ---- Purchase Return Modal with Cash Flow Options ----
+let _purReturnState = null;
+
+window.openPurchaseReturnModal = function(purId) {
+  const pur = (db.purchases || []).find((x) => x.id === purId);
+  if (!pur) return;
+  _purReturnState = {
+    purId,
+    qty: 1,
+    returnAmount: pur.unitCost || pur.totalAmount || 0,
+    deductStock: Boolean(pur.productId),
+    cashFlowMode: pur.paidBy === "balkees" ? "cash_refund_balkees" : (pur.paidBy === "split" ? "cash_refund_split" : "cash_refund_vaheeda"),
+    vaheedaRefund: 0,
+    balkeesRefund: 0,
+    reason: ""
+  };
+  renderPurchaseReturnModalDom();
+};
+
+function renderPurchaseReturnModalDom() {
+  if (!_purReturnState) return;
+  const st = _purReturnState;
+  const pur = (db.purchases || []).find((x) => x.id === st.purId);
+  if (!pur) return;
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>↩️ Purchase Return & Cash Flow</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div class="card" style="background:var(--bg);margin-bottom:10px;font-size:12.5px;">
+          <b>${esc(pur.itemsSummary || pur.productName)}</b> · Supplier: <b>${esc(pur.supplier)}</b> · Bill: <b>${money(pur.totalAmount)}</b>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Returned Qty</label>
+            <input id="prQty" type="number" value="${st.qty}">
+          </div>
+          <div class="field">
+            <label>Return / Refund Value (₹) *</label>
+            <input id="prAmt" type="number" inputmode="decimal" value="${st.returnAmount}">
+          </div>
+        </div>
+        <div class="field">
+          <label>💰 Cash Flow Option (Where does the supplier refund go?)</label>
+          <select id="prCashMode" onchange="onPurReturnCashModeChange(this.value)">
+            <option value="cash_refund_vaheeda" ${st.cashFlowMode === 'cash_refund_vaheeda' ? 'selected' : ''}>🌷 Cash Refund Received by Vaheeda (+Vaheeda Cash)</option>
+            <option value="cash_refund_balkees" ${st.cashFlowMode === 'cash_refund_balkees' ? 'selected' : ''}>🌸 Cash Refund Received by Balkees (+Balkees Cash)</option>
+            <option value="cash_refund_split" ${st.cashFlowMode === 'cash_refund_split' ? 'selected' : ''}>👭 Split Cash Refund Between Both Sisters (Popup)</option>
+            <option value="supplier_credit" ${st.cashFlowMode === 'supplier_credit' ? 'selected' : ''}>📒 Supplier Credit Note / Adjust Next Bill (No Cash In)</option>
+          </select>
+          ${st.cashFlowMode === "cash_refund_split" ? `
+            <div style="margin-top:6px;font-size:12px;color:var(--accent);font-weight:700;">
+              Split Refund: Vaheeda ${money(st.vaheedaRefund)} · Balkees ${money(st.balkeesRefund)}
+              <button class="btn btn-soft btn-sm" style="margin-left:6px;" onclick="onPurReturnCashModeChange('cash_refund_split')">Edit Split</button>
+            </div>
+          ` : ""}
+        </div>
+        ${pur.productId ? `
+          <div class="toggle-row">
+            <span>Deduct returned quantity from live outfit stock</span>
+            <input id="prDeduct" type="checkbox" style="width:20px;height:20px;" ${st.deductStock ? 'checked' : ''}>
+          </div>
+        ` : ""}
+        <div class="field">
+          <label>Return Reason / Note</label>
+          <input id="prReason" value="${esc(st.reason)}" placeholder="e.g. Damaged piece / wrong colour">
+        </div>
+        <button class="btn btn-primary" style="width:100%;" onclick="savePurchaseReturnFromModal()">✓ Record Purchase Return</button>
+      </div>
+    </div>
+  `;
+}
+
+window.onPurReturnCashModeChange = function(mode) {
+  if (!_purReturnState) return;
+  _purReturnState.qty = Number(document.getElementById("prQty")?.value) || 1;
+  _purReturnState.returnAmount = Number(document.getElementById("prAmt")?.value) || 0;
+  _purReturnState.reason = document.getElementById("prReason")?.value || "";
+  _purReturnState.cashFlowMode = mode;
+  if (mode === "cash_refund_split") {
+    openSplitAmountPopup("👭 Split Supplier Refund (Vaheeda & Balkees)", _purReturnState.returnAmount, _purReturnState.vaheedaRefund, _purReturnState.balkeesRefund, (v, b) => {
+      _purReturnState.vaheedaRefund = v;
+      _purReturnState.balkeesRefund = b;
+      renderPurchaseReturnModalDom();
+    });
+  } else {
+    renderPurchaseReturnModalDom();
+  }
+};
+
+window.savePurchaseReturnFromModal = function() {
+  if (!_purReturnState) return;
+  const pur = (db.purchases || []).find((x) => x.id === _purReturnState.purId);
+  if (!pur) return;
+  const qty = Math.max(1, Number(document.getElementById("prQty")?.value) || 1);
+  const returnAmount = Math.max(0, Number(document.getElementById("prAmt")?.value) || 0);
+  if (returnAmount <= 0) return showToast("Enter return amount");
+  const mode = document.getElementById("prCashMode")?.value || _purReturnState.cashFlowMode;
+  const deduct = Boolean(document.getElementById("prDeduct")?.checked);
+  const reason = (document.getElementById("prReason")?.value || "").trim();
+  const now = Date.now();
+
+  let vRef = 0, bRef = 0;
+  if (mode === "cash_refund_split") {
+    vRef = _purReturnState.vaheedaRefund || (returnAmount / 2);
+    bRef = _purReturnState.balkeesRefund || (returnAmount - vRef);
+  } else if (mode === "cash_refund_vaheeda") vRef = returnAmount;
+  else if (mode === "cash_refund_balkees") bRef = returnAmount;
+
+  if (!Array.isArray(pur.returns)) pur.returns = [];
+  pur.returns.push({
+    id: uid(),
+    date: todayIso(),
+    qty,
+    returnAmount,
+    deductStock: deduct,
+    cashFlowMode: mode,
+    vaheedaRefund: vRef,
+    balkeesRefund: bRef,
+    reason
+  });
+  pur._u = now;
+
+  if (deduct && pur.productId) {
+    const p = db.products.find((x) => x.id === pur.productId);
+    if (p) {
+      p.qty = Math.max(0, (Number(p.qty) || 0) - qty);
+      p._u = now;
+      outbox.add(`products/${p.id}`);
+    }
+  }
+
+  _purReturnState = null;
+  saveLocalDb();
+  outbox.add(`purchases/${pur.id}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Purchase return recorded ↩️");
+};
+
+// ---- Record Sale Modal (with Customer WhatsApp Number & Who Got Payment + Split Popup) ----
+let _draftSaleSplit = { receivedBy: "vaheeda", vaheedaAmount: 0, balkeesAmount: 0 };
+
+window.openSaleModal = function() {
+  const modalRoot = document.getElementById("modalRoot");
+  const firstProd = db.products[0];
+  const defRec = currentAccount?.id === "balkees" ? "balkees" : "vaheeda";
+  _draftSaleSplit = { receivedBy: defRec, vaheedaAmount: 0, balkeesAmount: 0 };
+  const wallets = computeSisterCashWallets();
+
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>🛍️ Record Sale & Order</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+
+        <div class="card" style="background:var(--accent-soft);padding:8px 12px;margin-bottom:10px;font-size:12px;">
+          <b>💰 Available Cash Wallets:</b> Vaheeda: <b>${money(wallets.vaheeda.availableCash)}</b> · Balkees: <b>${money(wallets.balkees.availableCash)}</b>
+        </div>
+
+        <div class="field">
+          <label>Select Outfit *</label>
           <select id="sProd" onchange="const pr=window.getProdPrice(this.value);if(pr)document.getElementById('sPrice').value=pr;">
             ${db.products.map((p) => `<option value="${p.id}">${esc(p.name)} (${p.qty} left · ${money(p.price)})</option>`).join("")}
           </select>
@@ -3596,6 +4776,12 @@ window.openSaleModal = function() {
             <input id="sCust" placeholder="e.g. Fathima">
           </div>
           <div class="field">
+            <label>📞 Customer WhatsApp Number (for Live Status)</label>
+            <input id="sPhone" type="tel" placeholder="e.g. 98765 43210">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
             <label>Sold By Sister</label>
             <select id="sSeller">
               <option value="vaheeda" ${currentAccount.id === 'vaheeda' ? 'selected' : ''}>🌷 Vaheeda</option>
@@ -3603,14 +4789,14 @@ window.openSaleModal = function() {
               <option value="both">👭 Both Sisters</option>
             </select>
           </div>
-        </div>
-        <div class="field-row">
           <div class="field">
             <label>Source / Channel</label>
             <select id="sChan">
               ${(db.settings.channels || DEFAULT_SETTINGS.channels).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
             </select>
           </div>
+        </div>
+        <div class="field-row">
           <div class="field">
             <label>Payment Method</label>
             <select id="sPayMethod">
@@ -3618,13 +4804,46 @@ window.openSaleModal = function() {
               <option value="PENDING">⏳ Pending / Unpaid</option>
             </select>
           </div>
+          <div class="field">
+            <label>💰 Who Got Payment?</label>
+            <select id="sReceivedBy" onchange="onSaleReceivedByChanged(this.value)">
+              <option value="vaheeda" ${defRec === 'vaheeda' ? 'selected' : ''}>🌷 Vaheeda Got Cash</option>
+              <option value="balkees" ${defRec === 'balkees' ? 'selected' : ''}>🌸 Balkees Got Cash</option>
+              <option value="split">👭 Split Payment (Popup)</option>
+            </select>
+          </div>
         </div>
-        <button class="btn btn-gold" style="width:100%;margin-top:8px;" onclick="saveSaleFromModal()">✓ Complete Sale</button>
+        <div id="saleSplitSummaryBadge" style="display:none;margin-bottom:8px;padding:8px 10px;background:var(--bg);border-radius:10px;font-size:12px;"></div>
+        <button class="btn btn-gold" style="width:100%;margin-top:6px;" onclick="saveSaleFromModal()">✓ Complete Sale</button>
       </div>
     </div>
   `;
 };
 window.getProdPrice = (id) => db.products.find((x) => x.id === id)?.price || "";
+
+window.onSaleReceivedByChanged = function(val) {
+  _draftSaleSplit.receivedBy = val;
+  if (val === "split") {
+    const qty = Math.max(1, Number(document.getElementById("sQty")?.value) || 1);
+    const price = Number(document.getElementById("sPrice")?.value) || 0;
+    const tot = qty * price;
+    openSplitAmountPopup("👭 Who Got How Much Payment?", tot, _draftSaleSplit.vaheedaAmount, _draftSaleSplit.balkeesAmount, (v, b) => {
+      _draftSaleSplit.receivedBy = "split";
+      _draftSaleSplit.vaheedaAmount = v;
+      _draftSaleSplit.balkeesAmount = b;
+      const sel = document.getElementById("sReceivedBy");
+      if (sel) sel.value = "split";
+      const badge = document.getElementById("saleSplitSummaryBadge");
+      if (badge) {
+        badge.style.display = "block";
+        badge.innerHTML = `💰 Payment Split: <b>Vaheeda ${money(v)}</b> · <b>Balkees ${money(b)}</b>`;
+      }
+    });
+  } else {
+    const badge = document.getElementById("saleSplitSummaryBadge");
+    if (badge) badge.style.display = "none";
+  }
+};
 
 window.saveSaleFromModal = function() {
   const prodId = document.getElementById("sProd")?.value;
@@ -3634,7 +4853,46 @@ window.saveSaleFromModal = function() {
   const price = Number(document.getElementById("sPrice")?.value) || prod.price;
   const total = qty * price;
   const payMethod = document.getElementById("sPayMethod")?.value || "UPI / GPay";
+  const recBy = document.getElementById("sReceivedBy")?.value || _draftSaleSplit.receivedBy || "vaheeda";
+  const custName = (document.getElementById("sCust")?.value || "").trim();
+  const custPhone = (document.getElementById("sPhone")?.value || "").trim();
   const now = Date.now();
+
+  let custId = "";
+  if (custName || custPhone) {
+    const existingCust = db.customers.find((c) => (custPhone && c.phone === custPhone) || (custName && c.name.toLowerCase() === custName.toLowerCase()));
+    if (existingCust) {
+      custId = existingCust.id;
+      if (custPhone && !existingCust.phone) {
+        existingCust.phone = custPhone;
+        existingCust._u = now;
+        outbox.add(`customers/${existingCust.id}`);
+      }
+    } else {
+      custId = uid();
+      db.customers.unshift({
+        id: custId,
+        name: custName || "Customer",
+        phone: custPhone,
+        address: "",
+        birthday: "",
+        size: "",
+        notes: "",
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        _u: now
+      });
+      outbox.add(`customers/${custId}`);
+    }
+  }
+
+  let vAmt = 0, bAmt = 0;
+  if (recBy === "split") {
+    vAmt = _draftSaleSplit.vaheedaAmount || (total / 2);
+    bAmt = _draftSaleSplit.balkeesAmount || (total - vAmt);
+  } else if (recBy === "balkees") bAmt = total;
+  else vAmt = total;
+
   const sale = {
     id: uid(),
     productId: prod.id,
@@ -3643,8 +4901,9 @@ window.saveSaleFromModal = function() {
     price,
     costAtSale: prod.cost || 0,
     owner: prod.owner || "joint",
-    customer: (document.getElementById("sCust")?.value || "").trim(),
-    customerId: "",
+    customer: custName,
+    customerId: custId,
+    customerPhone: custPhone,
     seller: document.getElementById("sSeller")?.value || "vaheeda",
     channel: document.getElementById("sChan")?.value || "Instagram",
     date: todayIso(),
@@ -3654,7 +4913,18 @@ window.saveSaleFromModal = function() {
     courier: "",
     tracking: "",
     address: "",
-    pays: payMethod === "PENDING" ? [] : [{ id: uid(), date: todayIso(), amount: total, method: payMethod, note: "" }],
+    isWebOrder: false,
+    orderSeen: true,
+    pays: payMethod === "PENDING" ? [] : [{
+      id: uid(),
+      date: todayIso(),
+      amount: total,
+      method: payMethod,
+      receivedBy: recBy,
+      vaheedaAmount: vAmt,
+      balkeesAmount: bAmt,
+      note: ""
+    }],
     returns: [],
     createdAt: nowIso(),
     _u: now
@@ -3672,10 +4942,264 @@ window.saveSaleFromModal = function() {
   showToast("Sale recorded 🎉");
 };
 
+// ---- Receive Payment on Pending Sale (with Who Got Payment + Split Popup) ----
+window.openReceiveSalePaymentModal = function(saleId) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  const paid = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+  const ret = (s.returns || []).reduce((a, r) => a + (Number(r.refund) || 0), 0);
+  const due = Math.max(0, (Number(s.total) || 0) - ret - paid);
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet" style="max-width:440px;">
+        <div class="modal-head">
+          <h3>💰 Receive Customer Payment</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Amount Received (₹)</label>
+            <input id="recPayAmt" type="number" value="${due}">
+          </div>
+          <div class="field">
+            <label>Payment Method</label>
+            <select id="recPayMethod">
+              ${(db.settings.payMethods || DEFAULT_SETTINGS.payMethods).map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>👭 Who Got the Payment?</label>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+            <button class="btn btn-primary btn-sm" onclick="confirmReceiveSalePayment('${s.id}', 'vaheeda')">🌷 Vaheeda</button>
+            <button class="btn btn-primary btn-sm" onclick="confirmReceiveSalePayment('${s.id}', 'balkees')">🌸 Balkees</button>
+            <button class="btn btn-gold btn-sm" onclick="confirmReceiveSalePayment('${s.id}', 'split')">👭 Split Popup</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+window.confirmReceiveSalePayment = function(saleId, recBy) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  const amt = Math.max(0, Number(document.getElementById("recPayAmt")?.value) || 0);
+  const method = document.getElementById("recPayMethod")?.value || "UPI / GPay";
+  if (amt <= 0) return showToast("Enter amount");
+
+  const finalize = (vAmt, bAmt) => {
+    if (!Array.isArray(s.pays)) s.pays = [];
+    s.pays.push({
+      id: uid(),
+      date: todayIso(),
+      amount: amt,
+      method,
+      receivedBy: recBy,
+      vaheedaAmount: vAmt,
+      balkeesAmount: bAmt,
+      note: ""
+    });
+    s._u = Date.now();
+    saveLocalDb();
+    outbox.add(`sales/${s.id}`);
+    saveOutbox();
+    closeModal();
+    renderApp();
+    pushOutboxToFirebase();
+    showToast("Payment recorded ✓");
+  };
+
+  if (recBy === "split") {
+    openSplitAmountPopup("👭 Split Received Payment (Vaheeda & Balkees)", amt, amt / 2, amt / 2, (v, b) => finalize(v, b));
+  } else if (recBy === "balkees") {
+    finalize(0, amt);
+  } else {
+    finalize(amt, 0);
+  }
+};
+
+// ---- Sales Return Modal with Cash Flow Options ----
+let _salesReturnState = null;
+
+window.openSalesReturnModal = function(saleId) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  _salesReturnState = {
+    saleId,
+    restock: 1,
+    refund: s.price || s.total || 0,
+    cashFlowMode: s.seller === "balkees" ? "refund_by_balkees" : "refund_by_vaheeda",
+    vaheedaRefund: 0,
+    balkeesRefund: 0,
+    reason: ""
+  };
+  renderSalesReturnModalDom();
+};
+
+function renderSalesReturnModalDom() {
+  if (!_salesReturnState) return;
+  const st = _salesReturnState;
+  const s = db.sales.find((x) => x.id === st.saleId);
+  if (!s) return;
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>↩️ Sales Return & Cash Flow</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div class="card" style="background:var(--bg);margin-bottom:10px;font-size:12.5px;">
+          <b>${esc(s.productName)} × ${s.qty}</b> · Customer: <b>${esc(s.customer || "Walk-in")}</b> · Sale Total: <b>${money(s.total)}</b>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Restock Qty to Inventory</label>
+            <input id="srRestock" type="number" min="0" value="${st.restock}">
+          </div>
+          <div class="field">
+            <label>Refund / Return Amount (₹) *</label>
+            <input id="srRefund" type="number" inputmode="decimal" value="${st.refund}">
+          </div>
+        </div>
+        <div class="field">
+          <label>💰 Cash Flow Option (Who refunded the customer?)</label>
+          <select id="srCashMode" onchange="onSalesReturnCashModeChange(this.value)">
+            <option value="refund_by_vaheeda" ${st.cashFlowMode === 'refund_by_vaheeda' ? 'selected' : ''}>🌷 Refunded from Vaheeda's Available Cash (−Vaheeda Cash)</option>
+            <option value="refund_by_balkees" ${st.cashFlowMode === 'refund_by_balkees' ? 'selected' : ''}>🌸 Refunded from Balkees's Available Cash (−Balkees Cash)</option>
+            <option value="refund_split" ${st.cashFlowMode === 'refund_split' ? 'selected' : ''}>👭 Split Refund by Both Sisters (Popup)</option>
+            <option value="store_credit" ${st.cashFlowMode === 'store_credit' ? 'selected' : ''}>🏷️ Exchange / Store Credit / Unpaid Adjust (No Cash Out)</option>
+          </select>
+          ${st.cashFlowMode === "refund_split" ? `
+            <div style="margin-top:6px;font-size:12px;color:var(--accent);font-weight:700;">
+              Split Refund: Vaheeda ${money(st.vaheedaRefund)} · Balkees ${money(st.balkeesRefund)}
+              <button class="btn btn-soft btn-sm" style="margin-left:6px;" onclick="onSalesReturnCashModeChange('refund_split')">Edit Split</button>
+            </div>
+          ` : ""}
+        </div>
+        <div class="field">
+          <label>Reason / Exchange Note</label>
+          <input id="srReason" value="${esc(st.reason)}" placeholder="e.g. Size exchange or customer refund">
+        </div>
+        <button class="btn btn-primary" style="width:100%;" onclick="saveSalesReturnFromModal()">✓ Confirm Sales Return</button>
+      </div>
+    </div>
+  `;
+}
+
+window.onSalesReturnCashModeChange = function(mode) {
+  if (!_salesReturnState) return;
+  _salesReturnState.restock = Number(document.getElementById("srRestock")?.value) || 0;
+  _salesReturnState.refund = Number(document.getElementById("srRefund")?.value) || 0;
+  _salesReturnState.reason = document.getElementById("srReason")?.value || "";
+  _salesReturnState.cashFlowMode = mode;
+  if (mode === "refund_split") {
+    openSplitAmountPopup("👭 Split Customer Refund (Vaheeda & Balkees)", _salesReturnState.refund, _salesReturnState.vaheedaRefund, _salesReturnState.balkeesRefund, (v, b) => {
+      _salesReturnState.vaheedaRefund = v;
+      _salesReturnState.balkeesRefund = b;
+      renderSalesReturnModalDom();
+    });
+  } else {
+    renderSalesReturnModalDom();
+  }
+};
+
+window.saveSalesReturnFromModal = function() {
+  if (!_salesReturnState) return;
+  const s = db.sales.find((x) => x.id === _salesReturnState.saleId);
+  if (!s) return;
+  const restock = Math.max(0, Number(document.getElementById("srRestock")?.value) || 0);
+  const refund = Math.max(0, Number(document.getElementById("srRefund")?.value) || 0);
+  const mode = document.getElementById("srCashMode")?.value || _salesReturnState.cashFlowMode;
+  const reason = (document.getElementById("srReason")?.value || "").trim();
+  const now = Date.now();
+
+  let vRef = 0, bRef = 0;
+  if (mode === "refund_split") {
+    vRef = _salesReturnState.vaheedaRefund || (refund / 2);
+    bRef = _salesReturnState.balkeesRefund || (refund - vRef);
+  } else if (mode === "refund_by_vaheeda") vRef = refund;
+  else if (mode === "refund_by_balkees") bRef = refund;
+
+  if (!Array.isArray(s.returns)) s.returns = [];
+  s.returns.push({
+    id: uid(),
+    date: todayIso(),
+    type: mode === "store_credit" ? "exchange" : "return",
+    refund,
+    restock,
+    cashFlowMode: mode,
+    vaheedaRefund: vRef,
+    balkeesRefund: bRef,
+    reason
+  });
+  s._u = now;
+
+  if (restock > 0 && s.productId) {
+    const p = db.products.find((x) => x.id === s.productId);
+    if (p) {
+      p.qty = (Number(p.qty) || 0) + restock;
+      p._u = now;
+      outbox.add(`products/${p.id}`);
+    }
+  }
+
+  _salesReturnState = null;
+  saveLocalDb();
+  outbox.add(`sales/${s.id}`);
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Sales return recorded ↩️");
+};
+
+// ---- Send Live Status to Customer via WhatsApp ----
+window.sendLiveOrderStatusWhatsApp = function(saleId, statusKey) {
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  const now = Date.now();
+  s.status = statusKey;
+  s.orderSeen = true;
+  s._u = now;
+  saveLocalDb();
+  outbox.add(`sales/${s.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+
+  const shop = db.settings.shopName || "SISORA Ethnic Wear";
+  const custName = s.customer || "Customer";
+  const item = `${s.productName} × ${s.qty}`;
+  let msg = "";
+  if (statusKey === "ordered") {
+    msg = `Hi ${custName}! 🌸\nYour order for *${item}* (${money(s.total)}) has been *RECEIVED* by *${shop}*! ✅\nWe are getting your outfit ready and will share live updates soon. 💕`;
+  } else if (statusKey === "packed") {
+    msg = `Hi ${custName}! ✨\nGreat news — your order for *${item}* is *PREPARED & PACKED* with love at *${shop}*! 🎁👗\nIt will be handed over to the courier shortly.`;
+  } else if (statusKey === "shipped") {
+    const trackInfo = s.courier || s.tracking ? `\n🚚 Courier: *${s.courier || "Express"}* ${s.tracking ? `(Tracking: *${s.tracking}*)` : ""}` : "";
+    msg = `Hi ${custName}! 🚚💨\nYour order for *${item}* from *${shop}* has been *DISPATCHED / COURIER DONE*!${trackInfo}\nThank you for shopping with us! 💖`;
+  } else {
+    msg = `Hi ${custName}! 🎉🌷\nYour order for *${item}* from *${shop}* has been marked as *DELIVERED*! ✨\nWe hope you love wearing it! Please share your feedback with us. 💕`;
+  }
+
+  let rawPhone = s.customerPhone || (db.customers.find((c) => c.id === s.customerId)?.phone) || "";
+  let digits = String(rawPhone).replace(/\D/g, "");
+  const cc = String(db.settings.waCountry || "91").replace(/\D/g, "");
+  if (digits.length === 10 && cc) digits = cc + digits;
+  const waUrl = digits
+    ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`
+    : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  window.open(waUrl, "_blank");
+};
+
 window.updateSaleStatus = function(saleId, status) {
   const s = db.sales.find((x) => x.id === saleId);
   if (!s) return;
   s.status = status;
+  s.orderSeen = true;
   s._u = Date.now();
   saveLocalDb();
   outbox.add(`sales/${s.id}`);
@@ -3683,19 +5207,6 @@ window.updateSaleStatus = function(saleId, status) {
   renderApp();
   pushOutboxToFirebase();
   showToast("Order status updated");
-};
-
-window.markSalePaid = function(saleId) {
-  const s = db.sales.find((x) => x.id === saleId);
-  if (!s) return;
-  s.pays = [{ id: uid(), date: todayIso(), amount: s.total, method: "UPI / GPay", note: "" }];
-  s._u = Date.now();
-  saveLocalDb();
-  outbox.add(`sales/${s.id}`);
-  saveOutbox();
-  renderApp();
-  pushOutboxToFirebase();
-  showToast("Marked as Paid ✓");
 };
 
 window.deleteSaleItem = function(saleId) {
@@ -3710,65 +5221,149 @@ window.deleteExpenseItem = function(expId) {
   requestDeleteApproval("expense", expId, `${e.title} (${money(e.amount)})`);
 };
 
-// ---- Expense / Contribution Modal ----
+// ---- Expense / Contribution Modal (with Split Popup & Funding Source) ----
+let _draftExpState = null;
+
 window.openExpenseModal = function(mode = "expense") {
   const isCap = mode === "capital";
+  _draftExpState = {
+    isCap,
+    title: "",
+    amount: "",
+    category: isCap ? "Capital Contribution" : ((db.settings.expCats || DEFAULT_SETTINGS.expCats)[0] || "Courier & Shipping"),
+    paidBy: currentAccount?.id === "balkees" ? "balkees" : "vaheeda",
+    vaheedaPaid: 0,
+    balkeesPaid: 0,
+    fundingSource: isCap ? "new_investment" : "available_cash"
+  };
+  renderExpenseModalDom();
+};
+
+function renderExpenseModalDom() {
+  if (!_draftExpState) return;
+  const st = _draftExpState;
+  const wallets = computeSisterCashWallets();
   const modalRoot = document.getElementById("modalRoot");
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>${isCap ? "💰 Add Sister Contribution" : "🧾 Add Expense"}</h3>
+          <h3>${st.isCap ? "💰 Add Sister Contribution" : "🧾 Add Expense (Single or Split)"}</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
         </div>
+
+        <div class="card" style="background:var(--accent-soft);padding:8px 12px;margin-bottom:10px;font-size:12px;">
+          <b>💰 Available Sales Cash:</b> Vaheeda: <b>${money(wallets.vaheeda.availableCash)}</b> · Balkees: <b>${money(wallets.balkees.availableCash)}</b>
+        </div>
+
         <div class="field">
-          <label>Description</label>
-          <input id="eTitle" placeholder="${isCap ? 'e.g. Eid Stock Capital Injection' : 'e.g. Courier & Packaging'}">
+          <label>Description *</label>
+          <input id="eTitle" value="${esc(st.title)}" placeholder="${st.isCap ? 'e.g. Eid Stock Capital Injection' : 'e.g. Courier & Packaging'}">
         </div>
         <div class="field-row">
           <div class="field">
-            <label>Amount (₹)</label>
-            <input id="eAmt" type="number" inputmode="decimal" placeholder="0">
+            <label>Total Amount (₹) *</label>
+            <input id="eAmt" type="number" inputmode="decimal" value="${st.amount}" placeholder="0">
           </div>
           <div class="field">
-            <label>Sister</label>
-            <select id="ePaidBy">
-              <option value="vaheeda">🌷 Vaheeda</option>
-              <option value="balkees">🌸 Balkees</option>
+            <label>Category</label>
+            <select id="eCat">
+              ${st.isCap
+                ? `<option value="Capital Contribution" ${st.category === 'Capital Contribution' ? 'selected' : ''}>Capital Contribution</option><option value="Partner Withdrawal" ${st.category === 'Partner Withdrawal' ? 'selected' : ''}>Partner Withdrawal</option>`
+                : (db.settings.expCats || DEFAULT_SETTINGS.expCats).map((c) => `<option value="${esc(c)}" ${st.category === c ? 'selected' : ''}>${esc(c)}</option>`).join("")
+              }
             </select>
           </div>
         </div>
+
+        ${!st.isCap ? `
+          <div class="field">
+            <label>💎 Paid From (Funding Source)</label>
+            <select id="eFundSrc">
+              <option value="available_cash" ${st.fundingSource === 'available_cash' ? 'selected' : ''}>💰 Available Cash via Sales (Deducts from Sister's Cash Wallet)</option>
+              <option value="new_investment" ${st.fundingSource === 'new_investment' ? 'selected' : ''}>💎 New Investment — Out of Pocket (Adds to Sister's Capital)</option>
+            </select>
+          </div>
+        ` : ""}
+
         <div class="field">
-          <label>Category</label>
-          <select id="eCat">
-            ${isCap
-              ? `<option value="Capital Contribution">Capital Contribution</option><option value="Partner Withdrawal">Partner Withdrawal</option>`
-              : (db.settings.expCats || DEFAULT_SETTINGS.expCats).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")
-            }
-          </select>
+          <label>👭 Paid By Sister (Select Split to open popup with both names)</label>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+            <button type="button" class="btn btn-sm ${st.paidBy === 'vaheeda' ? 'btn-primary' : 'btn-outline'}" onclick="selectExpensePaidBy('vaheeda')">🌷 Vaheeda</button>
+            <button type="button" class="btn btn-sm ${st.paidBy === 'balkees' ? 'btn-primary' : 'btn-outline'}" onclick="selectExpensePaidBy('balkees')">🌸 Balkees</button>
+            <button type="button" class="btn btn-sm ${st.paidBy === 'split' ? 'btn-primary' : 'btn-gold'}" onclick="selectExpensePaidBy('split')">👭 Split Popup</button>
+          </div>
+          ${st.paidBy === "split" ? `
+            <div style="margin-top:6px;padding:8px 10px;background:var(--bg);border-radius:10px;display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+              <span>🌷 Vaheeda: <b>${money(st.vaheedaPaid)}</b> · 🌸 Balkees: <b>${money(st.balkeesPaid)}</b></span>
+              <button type="button" class="btn btn-soft btn-sm" onclick="selectExpensePaidBy('split')">✏️ Edit Split</button>
+            </div>
+          ` : ""}
         </div>
-        <button class="btn btn-primary" style="width:100%;" onclick="saveExpenseFromModal()">💾 Save Entry</button>
+
+        <button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="saveExpenseFromModal()">💾 Save Entry</button>
       </div>
     </div>
   `;
+}
+
+window.selectExpensePaidBy = function(mode) {
+  if (!_draftExpState) return;
+  _draftExpState.title = document.getElementById("eTitle")?.value || "";
+  _draftExpState.amount = document.getElementById("eAmt")?.value || "";
+  _draftExpState.category = document.getElementById("eCat")?.value || _draftExpState.category;
+  if (document.getElementById("eFundSrc")) _draftExpState.fundingSource = document.getElementById("eFundSrc").value;
+
+  if (mode === "split") {
+    const tot = Number(_draftExpState.amount) || 0;
+    openSplitAmountPopup("👭 Split Expense Between Vaheeda & Balkees", tot, _draftExpState.vaheedaPaid, _draftExpState.balkeesPaid, (v, b) => {
+      _draftExpState.paidBy = "split";
+      _draftExpState.vaheedaPaid = v;
+      _draftExpState.balkeesPaid = b;
+      if (!Number(_draftExpState.amount)) _draftExpState.amount = v + b;
+      renderExpenseModalDom();
+    });
+  } else {
+    _draftExpState.paidBy = mode;
+    renderExpenseModalDom();
+  }
 };
 
 window.saveExpenseFromModal = function() {
+  if (!_draftExpState) return;
   const title = (document.getElementById("eTitle")?.value || "").trim() || "Boutique Entry";
   const amount = Number(document.getElementById("eAmt")?.value) || 0;
   if (amount <= 0) return showToast("Enter a valid amount");
+  const category = document.getElementById("eCat")?.value || _draftExpState.category || "Other";
+  const paidBy = _draftExpState.paidBy || "vaheeda";
+  const fundingSource = document.getElementById("eFundSrc")?.value || _draftExpState.fundingSource || "available_cash";
   const now = Date.now();
+
+  let vPaid = 0, bPaid = 0;
+  if (paidBy === "split") {
+    vPaid = Number(_draftExpState.vaheedaPaid) || (amount / 2);
+    bPaid = Number(_draftExpState.balkeesPaid) || (amount - vPaid);
+  } else if (paidBy === "balkees") {
+    bPaid = amount;
+  } else {
+    vPaid = amount;
+  }
+
   const exp = {
     id: uid(),
     title,
-    category: document.getElementById("eCat")?.value || "Other",
+    category,
     amount,
-    paidBy: document.getElementById("ePaidBy")?.value || "vaheeda",
+    paidBy,
+    vaheedaPaid: vPaid,
+    balkeesPaid: bPaid,
+    fundingSource,
     date: todayIso(),
     notes: "",
     createdAt: nowIso(),
     _u: now
   };
+  _draftExpState = null;
   db.expenses.unshift(exp);
   saveLocalDb();
   outbox.add(`expenses/${exp.id}`);
