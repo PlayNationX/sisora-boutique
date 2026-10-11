@@ -1697,245 +1697,248 @@ function renderMoreSettingsTab() {
       </div>
     </details>
 
-    <!-- 1. Names & greetings -->
-    <details class="set-block">
-      <summary>🏷️ Names & greetings</summary>
-      <div class="set-body">
-        <div class="field">
-          <label>Boutique name</label>
-          <input value="${esc(s.shopName)}" onchange="updateSettingField('shopName', this.value)">
+    ${!isAdmin ? `
+      <div class="card" style="background:var(--gold-soft);border-color:#e6c97a;">
+        <div style="font-size:12.5px;color:#6e4e08;">
+          🌷 <b>Sister Application Settings Mode (${esc(currentAccount.displayName)}):</b> Application look & feel, your profile photo, and your PIN are available above. Boutique administration blocks (<b>Names & greetings</b>, <b>Money & Defaults</b>, <b>Your Lists</b>, <b>Home & privacy</b>, <b>Backup & Restore</b>) are unlocked under the <b>Admin</b> account.
         </div>
-        <div class="field-row">
+      </div>
+    ` : `
+      <!-- 1. Names & greetings (Admin Only) -->
+      <details class="set-block">
+        <summary>🏷️ Names & greetings</summary>
+        <div class="set-body">
           <div class="field">
-            <label>App title (top of screen)</label>
-            <input value="${esc(s.brand || 'SISORA')}" onchange="updateSettingField('brand', this.value)">
+            <label>Boutique name</label>
+            <input value="${esc(s.shopName)}" onchange="updateSettingField('shopName', this.value)">
           </div>
-          <div class="field">
-            <label>Tagline (under the title)</label>
-            <input value="${esc(s.tagline)}" onchange="updateSettingField('tagline', this.value)">
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Logo letter or emoji</label>
-            <input maxlength="4" value="${esc(s.logo || 'S')}" onchange="updateSettingField('logo', this.value)">
-          </div>
-          <div class="field">
-            <label>Logo image (optional)</label>
-            <div style="display:flex;align-items:center;gap:8px;">
-              ${logoEntry && logoEntry.data ? `<img src="${logoEntry.data}" style="width:38px;height:38px;border-radius:10px;object-fit:cover;">` : ""}
-              <label class="btn btn-soft btn-sm" style="display:inline-flex;">
-                🖼 Upload logo
-                <input type="file" accept="image/*" style="display:none;" onchange="uploadLogoImage(this.files[0])">
-              </label>
-              ${s.logoAt ? `<button class="btn btn-outline btn-sm" onclick="removeLogoImage()">Remove</button>` : ""}
+          <div class="field-row">
+            <div class="field">
+              <label>App title (top of screen)</label>
+              <input value="${esc(s.brand || 'SISORA')}" onchange="updateSettingField('brand', this.value)">
+            </div>
+            <div class="field">
+              <label>Tagline (under the title)</label>
+              <input value="${esc(s.tagline)}" onchange="updateSettingField('tagline', this.value)">
             </div>
           </div>
-        </div>
-        <div class="field">
-          <label>Home greeting</label>
-          <input value="${esc(s.greeting)}" onchange="updateSettingField('greeting', this.value)">
-        </div>
-      </div>
-    </details>
-
-    <!-- 2. Money & Defaults -->
-    <details class="set-block">
-      <summary>💱 Money & Defaults</summary>
-      <div class="set-body">
-        <div class="field-row">
+          <div class="field-row">
+            <div class="field">
+              <label>Logo letter or emoji</label>
+              <input maxlength="4" value="${esc(s.logo || 'S')}" onchange="updateSettingField('logo', this.value)">
+            </div>
+            <div class="field">
+              <label>Logo image (optional)</label>
+              <div style="display:flex;align-items:center;gap:8px;">
+                ${logoEntry && logoEntry.data ? `<img src="${logoEntry.data}" style="width:38px;height:38px;border-radius:10px;object-fit:cover;">` : ""}
+                <label class="btn btn-soft btn-sm" style="display:inline-flex;">
+                  🖼 Upload logo
+                  <input type="file" accept="image/*" style="display:none;" onchange="uploadLogoImage(this.files[0])">
+                </label>
+                ${s.logoAt ? `<button class="btn btn-outline btn-sm" onclick="removeLogoImage()">Remove</button>` : ""}
+              </div>
+            </div>
+          </div>
           <div class="field">
-            <label>Currency</label>
-            <select onchange="updateSettingField('currency', this.value)">
-              ${CURRENCY_OPTIONS.map(([code, label]) => `<option value="${code}" ${(s.currency || 'INR') === code ? 'selected' : ''}>${esc(label)}</option>`).join("")}
+            <label>Home greeting</label>
+            <input value="${esc(s.greeting)}" onchange="updateSettingField('greeting', this.value)">
+          </div>
+        </div>
+      </details>
+
+      <!-- 2. Money & Defaults (Admin Only) -->
+      <details class="set-block">
+        <summary>💱 Money & Defaults</summary>
+        <div class="set-body">
+          <div class="field-row">
+            <div class="field">
+              <label>Currency</label>
+              <select onchange="updateSettingField('currency', this.value)">
+                ${CURRENCY_OPTIONS.map(([code, label]) => `<option value="${code}" ${(s.currency || 'INR') === code ? 'selected' : ''}>${esc(label)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label>Date style</label>
+              <select onchange="updateSettingField('dateFmt', this.value)">
+                <option value="short" ${(s.dateFmt || 'short') === 'short' ? 'selected' : ''}>10 Oct 2026</option>
+                <option value="slash" ${s.dateFmt === 'slash' ? 'selected' : ''}>10/10/2026</option>
+                <option value="iso" ${s.dateFmt === 'iso' ? 'selected' : ''}>2026-10-10</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Default low-stock alert</label>
+              <input type="number" min="0" value="${Number(s.defaultLow ?? 2)}" onchange="updateSettingField('defaultLow', Math.max(0, Number(this.value) || 0))">
+            </div>
+            <div class="field">
+              <label>Default payment</label>
+              <select onchange="updateSettingField('defaultPayment', this.value)">
+                <option value="paid" ${(s.defaultPayment || 'paid') === 'paid' ? 'selected' : ''}>Paid</option>
+                <option value="pending" ${s.defaultPayment === 'pending' ? 'selected' : ''}>Pending</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Default order status</label>
+              <select onchange="updateSettingField('defaultStatus', this.value)">
+                <option value="ordered" ${(s.defaultStatus || 'ordered') === 'ordered' ? 'selected' : ''}>🛒 Ordered</option>
+                <option value="packed" ${s.defaultStatus === 'packed' ? 'selected' : ''}>📦 Packed</option>
+                <option value="shipped" ${s.defaultStatus === 'shipped' ? 'selected' : ''}>🚚 Shipped</option>
+                <option value="delivered" ${s.defaultStatus === 'delivered' ? 'selected' : ''}>✅ Delivered</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Default sales channel</label>
+              <select onchange="updateSettingField('defaultChannel', this.value)">
+                <option value="" ${!s.defaultChannel ? 'selected' : ''}>Always first in list</option>
+                ${channels.map((ch) => `<option value="${esc(ch)}" ${s.defaultChannel === ch ? 'selected' : ''}>${esc(ch)}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Overdue after (days)</label>
+              <input type="number" min="1" value="${Number(s.dueDays || 7)}" onchange="updateSettingField('dueDays', Math.max(1, Number(this.value) || 7))">
+            </div>
+            <div class="field">
+              <label>WhatsApp country code</label>
+              <input placeholder="e.g. 91 or 971" value="${esc(s.waCountry || '')}" onchange="updateSettingField('waCountry', this.value)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Payment reminder message ({name}, {amount}, {item}, {shop})</label>
+            <textarea rows="2" onchange="updateSettingField('msgRemind', this.value)">${esc(s.msgRemind || DEFAULT_SETTINGS.msgRemind)}</textarea>
+          </div>
+          <div class="field">
+            <label>Shipped message ({name}, {item}, {courier}, {tracking}, {shop})</label>
+            <textarea rows="2" onchange="updateSettingField('msgShipped', this.value)">${esc(s.msgShipped || DEFAULT_SETTINGS.msgShipped)}</textarea>
+          </div>
+        </div>
+      </details>
+
+      <!-- 3. Your Lists (Admin Only) -->
+      <details class="set-block">
+        <summary>📝 Your Lists</summary>
+        <div class="set-body">
+          <div style="font-size:12px;color:var(--muted);">Add or remove items from the dropdowns used across the app.</div>
+          ${renderChipEditorHtml("payMethods", "Payment methods", "e.g. Cheque")}
+          ${renderChipEditorHtml("categories", "Stock categories", "e.g. Lehenga")}
+          ${renderChipEditorHtml("channels", "Sales channels", "e.g. Facebook")}
+          ${renderChipEditorHtml("expCats", "Expense categories", "e.g. Rent")}
+        </div>
+      </details>
+
+      <!-- 4. Home & privacy (Admin Only) -->
+      <details class="set-block">
+        <summary>🔒 Home & privacy</summary>
+        <div class="set-body">
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Hide amounts (Privacy mode)</div>
+              <div style="font-size:11.5px;color:var(--muted);">Masks money on Home, Stock, Sales, Expenses and Reports</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.privacy ? 'checked' : ''} onchange="updateSettingField('privacy', this.checked)">
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Confirm before deleting</div>
+              <div style="font-size:11.5px;color:var(--muted);">Ask "Are you sure?" before removing items</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.confirmDelete !== false ? 'checked' : ''} onchange="updateSettingField('confirmDelete', this.checked)">
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Profit card on Home</div>
+              <div style="font-size:11.5px;color:var(--muted);">Big net-profit & greeting banner</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.showHero !== false ? 'checked' : ''} onchange="updateSettingField('showHero', this.checked)">
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Summary tiles on Home</div>
+              <div style="font-size:11.5px;color:var(--muted);">Today, stock, sales and expenses</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.showStats !== false ? 'checked' : ''} onchange="updateSettingField('showStats', this.checked)">
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Quick actions on Home</div>
+              <div style="font-size:11.5px;color:var(--muted);">Shortcut buttons</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.showQuick !== false ? 'checked' : ''} onchange="updateSettingField('showQuick', this.checked)">
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Low-stock reminders on Home</div>
+              <div style="font-size:11.5px;color:var(--muted);">List of items running out</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.showLow !== false ? 'checked' : ''} onchange="updateSettingField('showLow', this.checked)">
+          </div>
+          <div class="field" style="margin-top:4px;">
+            <label>Low-stock reminders shown</label>
+            <select onchange="updateSettingField('lowCount', Number(this.value) || 3)">
+              <option value="1" ${Number(s.lowCount) === 1 ? 'selected' : ''}>1 item</option>
+              <option value="3" ${(Number(s.lowCount) || 3) === 3 ? 'selected' : ''}>3 items</option>
+              <option value="5" ${Number(s.lowCount) === 5 ? 'selected' : ''}>5 items</option>
+              <option value="10" ${Number(s.lowCount) === 10 ? 'selected' : ''}>10 items</option>
             </select>
           </div>
-          <div class="field">
-            <label>Date style</label>
-            <select onchange="updateSettingField('dateFmt', this.value)">
-              <option value="short" ${(s.dateFmt || 'short') === 'short' ? 'selected' : ''}>10 Oct 2026</option>
-              <option value="slash" ${s.dateFmt === 'slash' ? 'selected' : ''}>10/10/2026</option>
-              <option value="iso" ${s.dateFmt === 'iso' ? 'selected' : ''}>2026-10-10</option>
-            </select>
+          <div class="toggle-row">
+            <div>
+              <div style="font-weight:700;font-size:13.5px;">Tip on Home</div>
+              <div style="font-size:11.5px;color:var(--muted);">Privacy & backup notice at the bottom</div>
+            </div>
+            <input type="checkbox" style="width:20px;height:20px;" ${s.showNotice !== false ? 'checked' : ''} onchange="updateSettingField('showNotice', this.checked)">
           </div>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Default low-stock alert</label>
-            <input type="number" min="0" value="${Number(s.defaultLow ?? 2)}" onchange="updateSettingField('defaultLow', Math.max(0, Number(this.value) || 0))">
-          </div>
-          <div class="field">
-            <label>Default payment</label>
-            <select onchange="updateSettingField('defaultPayment', this.value)">
-              <option value="paid" ${(s.defaultPayment || 'paid') === 'paid' ? 'selected' : ''}>Paid</option>
-              <option value="pending" ${s.defaultPayment === 'pending' ? 'selected' : ''}>Pending</option>
-            </select>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Default order status</label>
-            <select onchange="updateSettingField('defaultStatus', this.value)">
-              <option value="ordered" ${(s.defaultStatus || 'ordered') === 'ordered' ? 'selected' : ''}>🛒 Ordered</option>
-              <option value="packed" ${s.defaultStatus === 'packed' ? 'selected' : ''}>📦 Packed</option>
-              <option value="shipped" ${s.defaultStatus === 'shipped' ? 'selected' : ''}>🚚 Shipped</option>
-              <option value="delivered" ${s.defaultStatus === 'delivered' ? 'selected' : ''}>✅ Delivered</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Default sales channel</label>
-            <select onchange="updateSettingField('defaultChannel', this.value)">
-              <option value="" ${!s.defaultChannel ? 'selected' : ''}>Always first in list</option>
-              ${channels.map((ch) => `<option value="${esc(ch)}" ${s.defaultChannel === ch ? 'selected' : ''}>${esc(ch)}</option>`).join("")}
-            </select>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Overdue after (days)</label>
-            <input type="number" min="1" value="${Number(s.dueDays || 7)}" onchange="updateSettingField('dueDays', Math.max(1, Number(this.value) || 7))">
-          </div>
-          <div class="field">
-            <label>WhatsApp country code</label>
-            <input placeholder="e.g. 91 or 971" value="${esc(s.waCountry || '')}" onchange="updateSettingField('waCountry', this.value)">
-          </div>
-        </div>
-        <div class="field">
-          <label>Payment reminder message ({name}, {amount}, {item}, {shop})</label>
-          <textarea rows="2" onchange="updateSettingField('msgRemind', this.value)">${esc(s.msgRemind || DEFAULT_SETTINGS.msgRemind)}</textarea>
-        </div>
-        <div class="field">
-          <label>Shipped message ({name}, {item}, {courier}, {tracking}, {shop})</label>
-          <textarea rows="2" onchange="updateSettingField('msgShipped', this.value)">${esc(s.msgShipped || DEFAULT_SETTINGS.msgShipped)}</textarea>
-        </div>
-      </div>
-    </details>
+      </details>
 
-    <!-- 3. Your Lists -->
-    <details class="set-block">
-      <summary>📝 Your Lists</summary>
-      <div class="set-body">
-        <div style="font-size:12px;color:var(--muted);">Add or remove items from the dropdowns used across the app.</div>
-        ${renderChipEditorHtml("payMethods", "Payment methods", "e.g. Cheque")}
-        ${renderChipEditorHtml("categories", "Stock categories", "e.g. Lehenga")}
-        ${renderChipEditorHtml("channels", "Sales channels", "e.g. Facebook")}
-        ${renderChipEditorHtml("expCats", "Expense categories", "e.g. Rent")}
-      </div>
-    </details>
+      <!-- 5. Backup & Restore (Admin Only) -->
+      <details class="set-block">
+        <summary>💾 Backup & Restore</summary>
+        <div class="set-body">
+          <div style="font-size:12.5px;color:var(--muted);">
+            Export a copy of all products, sales, expenses, photos and settings, or restore a previous SISORA backup.
+          </div>
+          <button class="btn btn-primary" onclick="exportFullBackupJson()">⬇ Export full backup (JSON)</button>
+          <label class="btn btn-soft" style="justify-content:center;">
+            ⬆ Restore backup from JSON file
+            <input type="file" accept=".json,application/json" style="display:none;" onchange="restoreBackupFromJson(this.files[0])">
+          </label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button class="btn btn-outline btn-sm" onclick="exportCsv('sales')">Export sales CSV</button>
+            <button class="btn btn-outline btn-sm" onclick="exportCsv('stock')">Export stock CSV</button>
+            <button class="btn btn-outline btn-sm" onclick="exportCsv('expenses')">Export expenses CSV</button>
+            <button class="btn btn-outline btn-sm" onclick="exportCsv('customers')">Export customers CSV</button>
+          </div>
+          <button class="btn btn-soft btn-sm" onclick="resetAllSettingsKeepRecords()">Reset all settings (keeps your records)</button>
+        </div>
+      </details>
 
-    <!-- 4. Home & privacy -->
-    <details class="set-block">
-      <summary>🔒 Home & privacy</summary>
-      <div class="set-body">
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Hide amounts (Privacy mode)</div>
-            <div style="font-size:11.5px;color:var(--muted);">Masks money on Home, Stock, Sales, Expenses and Reports</div>
+      <!-- Sisters Profiles (Vaheeda & Balkees) (Admin Only) -->
+      <details class="set-block">
+        <summary>👭 Sisters Profiles (Vaheeda & Balkees)</summary>
+        <div class="set-body">
+          <div style="font-size:12.5px;color:var(--muted);">
+            The boutique co-founders are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>. Upload or update their profile pictures below.
           </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.privacy ? 'checked' : ''} onchange="updateSettingField('privacy', this.checked)">
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Confirm before deleting</div>
-            <div style="font-size:11.5px;color:var(--muted);">Ask "Are you sure?" before removing items</div>
-          </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.confirmDelete !== false ? 'checked' : ''} onchange="updateSettingField('confirmDelete', this.checked)">
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Profit card on Home</div>
-            <div style="font-size:11.5px;color:var(--muted);">Big net-profit & greeting banner</div>
-          </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.showHero !== false ? 'checked' : ''} onchange="updateSettingField('showHero', this.checked)">
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Summary tiles on Home</div>
-            <div style="font-size:11.5px;color:var(--muted);">Today, stock, sales and expenses</div>
-          </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.showStats !== false ? 'checked' : ''} onchange="updateSettingField('showStats', this.checked)">
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Quick actions on Home</div>
-            <div style="font-size:11.5px;color:var(--muted);">Shortcut buttons</div>
-          </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.showQuick !== false ? 'checked' : ''} onchange="updateSettingField('showQuick', this.checked)">
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Low-stock reminders on Home</div>
-            <div style="font-size:11.5px;color:var(--muted);">List of items running out</div>
-          </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.showLow !== false ? 'checked' : ''} onchange="updateSettingField('showLow', this.checked)">
-        </div>
-        <div class="field" style="margin-top:4px;">
-          <label>Low-stock reminders shown</label>
-          <select onchange="updateSettingField('lowCount', Number(this.value) || 3)">
-            <option value="1" ${Number(s.lowCount) === 1 ? 'selected' : ''}>1 item</option>
-            <option value="3" ${(Number(s.lowCount) || 3) === 3 ? 'selected' : ''}>3 items</option>
-            <option value="5" ${Number(s.lowCount) === 5 ? 'selected' : ''}>5 items</option>
-            <option value="10" ${Number(s.lowCount) === 10 ? 'selected' : ''}>10 items</option>
-          </select>
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div style="font-weight:700;font-size:13.5px;">Tip on Home</div>
-            <div style="font-size:11.5px;color:var(--muted);">Privacy & backup notice at the bottom</div>
-          </div>
-          <input type="checkbox" style="width:20px;height:20px;" ${s.showNotice !== false ? 'checked' : ''} onchange="updateSettingField('showNotice', this.checked)">
-        </div>
-      </div>
-    </details>
-
-    <!-- 5. Backup & Restore -->
-    <details class="set-block">
-      <summary>💾 Backup & Restore</summary>
-      <div class="set-body">
-        <div style="font-size:12.5px;color:var(--muted);">
-          Export a copy of all products, sales, expenses, photos and settings, or restore a previous SISORA backup.
-        </div>
-        <button class="btn btn-primary" onclick="exportFullBackupJson()">⬇ Export full backup (JSON)</button>
-        <label class="btn btn-soft" style="justify-content:center;">
-          ⬆ Restore backup from JSON file
-          <input type="file" accept=".json,application/json" style="display:none;" onchange="restoreBackupFromJson(this.files[0])">
-        </label>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <button class="btn btn-outline btn-sm" onclick="exportCsv('sales')">Export sales CSV</button>
-          <button class="btn btn-outline btn-sm" onclick="exportCsv('stock')">Export stock CSV</button>
-          <button class="btn btn-outline btn-sm" onclick="exportCsv('expenses')">Export expenses CSV</button>
-          <button class="btn btn-outline btn-sm" onclick="exportCsv('customers')">Export customers CSV</button>
-        </div>
-        <button class="btn btn-soft btn-sm" onclick="resetAllSettingsKeepRecords()">Reset all settings (keeps your records)</button>
-      </div>
-    </details>
-
-    <!-- Sisters Profiles (Vaheeda & Balkees) -->
-    <details class="set-block">
-      <summary>👭 Sisters Profiles (Vaheeda & Balkees)</summary>
-      <div class="set-body">
-        <div style="font-size:12.5px;color:var(--muted);">
-          The boutique co-founders are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>. Upload or update their profile pictures below.
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          ${["vaheeda", "balkees"].map((sid) => {
-            const canEdit = isAdmin || (currentAccount && currentAccount.id === sid);
-            return `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            ${["vaheeda", "balkees"].map((sid) => `
               <div class="kpi-box" style="text-align:center;">
                 <div style="margin-bottom:6px;display:flex;justify-content:center;">${getAccountAvatarHtml(sid, "lg")}</div>
                 <div style="font-weight:800;text-transform:capitalize;">${sid}</div>
-                ${canEdit ? `
-                  <label class="btn btn-soft btn-sm" style="margin-top:6px;">
-                    📸 Photo
-                    <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
-                  </label>
-                ` : ""}
+                <label class="btn btn-soft btn-sm" style="margin-top:6px;">
+                  📸 Photo
+                  <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
+                </label>
               </div>
-            `;
-          }).join("")}
+            `).join("")}
+          </div>
         </div>
-      </div>
-    </details>
+      </details>
+    `}
   `;
 }
 
