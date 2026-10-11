@@ -380,6 +380,7 @@ const DEFAULT_SETTINGS = {
   logoAt: 0,
   pins: { admin: "5603", vaheeda: "2515", balkees: "8305" },
   profilePhotosAt: {},
+  pendingDeletes: [],
   currency: "INR",
   dateFmt: "short",
   defaultLow: 2,
@@ -470,7 +471,13 @@ function loadLocalDb() {
         customers: Array.isArray(raw.customers) ? raw.customers : [],
         settlements: Array.isArray(raw.settlements) ? raw.settlements : [],
         tombs: Array.isArray(raw.tombs) ? raw.tombs : [],
-        settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}), sisters: FIXED_SISTERS, pins: { ...DEFAULT_SETTINGS.pins, ...((raw.settings && raw.settings.pins) || {}) } }
+        settings: {
+          ...DEFAULT_SETTINGS,
+          ...(raw.settings || {}),
+          sisters: FIXED_SISTERS,
+          pins: { ...DEFAULT_SETTINGS.pins, ...((raw.settings && raw.settings.pins) || {}) },
+          pendingDeletes: Array.isArray(raw.settings && raw.settings.pendingDeletes) ? raw.settings.pendingDeletes : []
+        }
       };
     }
   } catch (e) {}
@@ -800,7 +807,509 @@ function updateSyncPill() {
 }
 
 // ============================================================================
-// MODE 1: Customer Temporary Showcase Page (?item=...)
+// MODE 1A: Customer Live Catalogue Storefront (?catalogue=live)
+// Supports clickable multi-photo lightbox, single & multiple item selection,
+// size/colour/quantity pickers, and direct customer ordering into Firebase!
+// ============================================================================
+let catProducts = [];
+let catPhotosMap = {}; // prodId -> [dataUrl, ...]
+let catShopSettings = { ...DEFAULT_SETTINGS };
+let catSearch = "";
+let catCategory = "All";
+// Selected items map: prodId -> { selected: boolean, qty: number, size: string, color: string }
+let catSelections = {};
+
+function getCatItemState(p) {
+  if (!catSelections[p.id]) {
+    const sizes = String(p.variant || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+    const colors = String(p.color || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+    catSelections[p.id] = {
+      selected: false,
+      qty: 1,
+      size: sizes[0] || "Free Size",
+      color: colors[0] || "As Shown"
+    };
+  }
+  return catSelections[p.id];
+}
+
+async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
+  const root = document.getElementById("app");
+  root.innerHTML = `
+    <div class="auth-screen" style="text-align:center;">
+      <div class="card" style="padding:28px 20px;">
+        <div style="font-size:38px;margin-bottom:10px;">👗</div>
+        <h2 style="margin:0 0 6px;">Loading Live Collection…</h2>
+        <p style="color:var(--muted);margin:0;">Fetching current in-stock outfits & photos from SISORA…</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const shopId = FIREBASE_CFG.shopId;
+    const [rawSettings, rawProducts] = await Promise.all([
+      fbGet(`shops/${shopId}/data/settings`),
+      fbGet(`shops/${shopId}/data/products`)
+    ]);
+
+    if (rawSettings && rawSettings.j) {
+      const parsedSet = typeof rawSettings.j === "string" ? JSON.parse(rawSettings.j) : rawSettings.j;
+      catShopSettings = { ...DEFAULT_SETTINGS, ...parsedSet };
+      db.settings = catShopSettings;
+      applyTheme();
+    }
+
+    const inStockList = [];
+    if (rawProducts && typeof rawProducts === "object") {
+      for (const [pid, wrap] of Object.entries(rawProducts)) {
+        if (!wrap || wrap.deleted || !wrap.j) continue;
+        const p = typeof wrap.j === "string" ? JSON.parse(wrap.j) : wrap.j;
+        if (p && Number(p.qty) > 0) {
+          inStockList.push(p);
+        }
+      }
+    }
+    inStockList.sort((a, b) => (Number(b._u) || 0) - (Number(a._u) || 0));
+    catProducts = inStockList;
+
+    if (preselectProdId) {
+      const found = catProducts.find((x) => x.id === preselectProdId);
+      if (found) {
+        const st = getCatItemState(found);
+        st.selected = true;
+      }
+    }
+
+    renderLiveCatalogueDom();
+
+    // Load product photos progressively in parallel
+    await Promise.all(
+      catProducts.map(async (p) => {
+        const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
+        const urls = [];
+        for (const imgId of ids) {
+          const im = await fbGet(`shops/${shopId}/data/images/${imgId}`);
+          if (im && im.data) urls.push(im.data);
+        }
+        if (urls.length) {
+          catPhotosMap[p.id] = urls;
+          renderLiveCatalogueDom();
+        }
+      })
+    );
+  } catch (err) {
+    root.innerHTML = `
+      <div class="auth-screen" style="text-align:center;">
+        <div class="card" style="padding:28px 20px;">
+          <h2>Unable to load live catalogue</h2>
+          <p style="color:var(--muted);">${esc(err.message)}</p>
+        </div>
+      </div>
+    `;
+  }
+}
+
+function renderLiveCatalogueDom() {
+  const root = document.getElementById("app");
+  const cats = ["All", ...new Set(catProducts.map((p) => p.category || "Kurti").filter(Boolean))];
+  const filtered = catProducts.filter((p) => {
+    const q = catSearch.trim().toLowerCase();
+    const matchQ = !q || [p.name, p.code, p.category, p.color, p.variant].some((v) => String(v || "").toLowerCase().includes(q));
+    const matchCat = catCategory === "All" || (p.category || "Kurti") === catCategory;
+    return matchQ && matchCat;
+  });
+
+  const selectedItems = catProducts.filter((p) => getCatItemState(p).selected);
+  const selectedTotalQty = selectedItems.reduce((a, p) => a + (getCatItemState(p).qty || 1), 0);
+  const selectedTotalPrice = selectedItems.reduce((a, p) => a + (Number(p.price) || 0) * (getCatItemState(p).qty || 1), 0);
+
+  root.innerHTML = `
+    <div class="app-shell" style="padding-bottom:110px;">
+      <header class="topbar">
+        <div class="brand-row">
+          <div class="shop-logo">${esc(catShopSettings.logo || "S")}</div>
+          <div class="brand-text">
+            <h1>${esc(catShopSettings.catTitle || catShopSettings.shopName)}</h1>
+            <p>${esc(catShopSettings.tagline)} · Live Customer Catalogue</p>
+          </div>
+        </div>
+        <span class="pill green">● ${catProducts.length} In Stock</span>
+      </header>
+
+      <main class="container">
+        <div class="card hero-card" style="padding:14px 16px;">
+          <h2 style="margin:0;font-size:18px;">✨ Browse Live Stock & Place Your Order</h2>
+          <p style="margin:4px 0 0;font-size:12.5px;">
+            📸 Tap any outfit photo to view all angles · ☑️ Select <b>single</b> or <b>multiple</b> outfits · 🛍️ Tap <b>Make Order</b> below!
+          </p>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="search" placeholder="🔍 Search outfit, colour, size, category…" value="${esc(catSearch)}" oninput="window.setCatSearch(this.value)">
+          ${selectedItems.length > 0 ? `<button class="btn btn-outline btn-sm" style="flex-shrink:0;" onclick="window.clearCatSelection()">Clear (${selectedItems.length})</button>` : ""}
+        </div>
+
+        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
+          ${cats.map((c) => `<button class="btn btn-sm ${catCategory === c ? 'btn-primary' : 'btn-outline'}" style="flex-shrink:0;" onclick="window.setCatCategory('${esc(c)}')">${esc(c)}</button>`).join("")}
+        </div>
+
+        ${filtered.length === 0 ? `
+          <div class="card" style="text-align:center;padding:28px;">
+            <div style="font-size:38px;">🌷</div>
+            <h3 style="margin:8px 0 4px;">No matching outfits in stock</h3>
+            <p style="color:var(--muted);margin:0;">Try clearing your search or choosing another category.</p>
+          </div>
+        ` : filtered.map((p) => {
+          const photos = catPhotosMap[p.id] || [];
+          const coverUrl = photos[0] || "";
+          const st = getCatItemState(p);
+          const sizes = String(p.variant || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+          const colors = String(p.color || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+          const maxQty = Math.max(1, Number(p.qty) || 1);
+
+          return `
+            <div class="prod-tile" style="${st.selected ? 'border:2.5px solid var(--accent);box-shadow:0 10px 28px rgba(200,95,131,0.22);' : ''}">
+              ${coverUrl ? `<div class="prod-blur-bg" style="background-image:url('${coverUrl}')"></div>` : ""}
+              <div class="prod-scrim" style="padding:14px;">
+                <div style="display:flex;gap:12px;align-items:flex-start;">
+                  <!-- Clickable Photo Thumbnail -->
+                  <div class="prod-thumb" style="width:96px;height:116px;border-radius:14px;cursor:pointer;" onclick="window.openCatProductGallery('${p.id}', 0)">
+                    ${coverUrl ? `<img src="${coverUrl}" alt="${esc(p.name)}">` : "👗"}
+                    <span class="photo-count-badge">🔍 ${photos.length > 1 ? `${photos.length} photos` : "Zoom"}</span>
+                  </div>
+
+                  <div class="prod-info">
+                    <div class="prod-title">
+                      <span style="font-size:16px;">${esc(p.name)}</span>
+                      <span style="color:var(--accent);font-size:17px;font-weight:900;">${money(p.price)}</span>
+                    </div>
+                    <div class="prod-meta">
+                      ${p.code ? `Code: <b>${esc(p.code)}</b> · ` : ""}${esc(p.category || "Kurti")}
+                    </div>
+                    <div class="pill-row" style="margin-top:4px;">
+                      <span class="pill green">✅ ${maxQty} available in live stock</span>
+                      ${st.selected ? `<span class="pill" style="background:var(--accent);color:#fff;">✓ Selected (${st.qty})</span>` : ""}
+                    </div>
+
+                    ${photos.length > 1 ? `
+                      <div style="display:flex;gap:6px;overflow-x:auto;margin-top:8px;">
+                        ${photos.map((u, idx) => `
+                          <img src="${u}" onclick="window.openCatProductGallery('${p.id}', ${idx})"
+                               style="width:42px;height:50px;border-radius:8px;object-fit:cover;border:1.5px solid var(--accent);cursor:pointer;flex-shrink:0;">
+                        `).join("")}
+                      </div>
+                    ` : ""}
+                  </div>
+                </div>
+
+                <!-- Size, Colour & Quantity Pickers -->
+                <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                  <div>
+                    <label style="font-size:11px;font-weight:800;color:var(--muted);display:block;margin-bottom:3px;">📏 CHOOSE SIZE</label>
+                    <select style="padding:6px 8px;font-size:12.5px;" onchange="window.updateCatItemOption('${p.id}', 'size', this.value)">
+                      ${sizes.map((sz) => `<option value="${esc(sz)}" ${st.size === sz ? 'selected' : ''}>${esc(sz)}</option>`).join("")}
+                    </select>
+                  </div>
+                  <div>
+                    <label style="font-size:11px;font-weight:800;color:var(--muted);display:block;margin-bottom:3px;">🎨 CHOOSE COLOUR</label>
+                    <select style="padding:6px 8px;font-size:12.5px;" onchange="window.updateCatItemOption('${p.id}', 'color', this.value)">
+                      ${colors.map((cl) => `<option value="${esc(cl)}" ${st.color === cl ? 'selected' : ''}>${esc(cl)}</option>`).join("")}
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Quantity + Select Single / Multiple Actions -->
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:11.5px;font-weight:700;color:var(--muted);">Qty:</span>
+                    <button class="btn btn-outline btn-sm" onclick="window.changeCatItemQty('${p.id}', -1)">−</button>
+                    <span style="font-weight:800;min-width:20px;text-align:center;">${st.qty}</span>
+                    <button class="btn btn-outline btn-sm" onclick="window.changeCatItemQty('${p.id}', 1)">+</button>
+                  </div>
+                  <div style="display:flex;gap:6px;flex:1;justify-content:flex-end;">
+                    <button class="btn btn-sm ${st.selected ? 'btn-primary' : 'btn-soft'}" onclick="window.toggleCatItemSelect('${p.id}')">
+                      ${st.selected ? "☑️ Selected (Tap to remove)" : "➕ Select (Multi-Order)"}
+                    </button>
+                    <button class="btn btn-gold btn-sm" onclick="window.orderSingleCatItemNow('${p.id}')">
+                      ⚡ Order Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </main>
+
+      <!-- Sticky Bottom Customer Order Bar -->
+      <div style="position:fixed;bottom:0;left:0;right:0;z-index:50;background:color-mix(in srgb, var(--paper) 95%, transparent);backdrop-filter:blur(16px);border-top:1.5px solid var(--line);padding:12px 16px calc(12px + var(--safe-bottom));">
+        <div style="max-width:600px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="font-size:12px;color:var(--muted);font-weight:700;">
+              ${selectedItems.length === 0 ? "Tap 'Select' on 1 or more outfits" : `🛍️ ${selectedItems.length} outfit(s) · ${selectedTotalQty} pc(s)`}
+            </div>
+            <div style="font-size:18px;font-weight:900;color:var(--accent);">
+              Total: ${money(selectedTotalPrice)}
+            </div>
+          </div>
+          <button class="btn btn-primary" style="padding:12px 20px;font-size:14.5px;"
+                  onclick="window.openCustomerCheckoutModal()">
+            🛍️ Make Order (${selectedItems.length}) →
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.setCatSearch = (v) => { catSearch = v; renderLiveCatalogueDom(); };
+window.setCatCategory = (c) => { catCategory = c; renderLiveCatalogueDom(); };
+window.clearCatSelection = () => {
+  Object.keys(catSelections).forEach((k) => { catSelections[k].selected = false; });
+  renderLiveCatalogueDom();
+};
+window.openCatProductGallery = (prodId, startIdx = 0) => {
+  const urls = catPhotosMap[prodId] || [];
+  if (!urls.length) return showToast("Photo loading…");
+  openLightbox(urls, startIdx);
+};
+window.updateCatItemOption = (prodId, field, value) => {
+  const p = catProducts.find((x) => x.id === prodId);
+  if (!p) return;
+  const st = getCatItemState(p);
+  st[field] = value;
+};
+window.changeCatItemQty = (prodId, delta) => {
+  const p = catProducts.find((x) => x.id === prodId);
+  if (!p) return;
+  const st = getCatItemState(p);
+  const maxQty = Math.max(1, Number(p.qty) || 1);
+  st.qty = Math.max(1, Math.min(maxQty, (st.qty || 1) + delta));
+  st.selected = true;
+  renderLiveCatalogueDom();
+};
+window.toggleCatItemSelect = (prodId) => {
+  const p = catProducts.find((x) => x.id === prodId);
+  if (!p) return;
+  const st = getCatItemState(p);
+  st.selected = !st.selected;
+  renderLiveCatalogueDom();
+};
+window.orderSingleCatItemNow = (prodId) => {
+  const p = catProducts.find((x) => x.id === prodId);
+  if (!p) return;
+  const st = getCatItemState(p);
+  st.selected = true;
+  renderLiveCatalogueDom();
+  window.openCustomerCheckoutModal();
+};
+
+window.openCustomerCheckoutModal = () => {
+  const selectedItems = catProducts.filter((p) => getCatItemState(p).selected);
+  if (selectedItems.length === 0) {
+    showToast("Please select at least 1 outfit first 👗");
+    return;
+  }
+  const totalAmount = selectedItems.reduce((a, p) => a + (Number(p.price) || 0) * (getCatItemState(p).qty || 1), 0);
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <h3>🛍️ Complete Your Order (${selectedItems.length} ${selectedItems.length === 1 ? "Outfit" : "Outfits"})</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+
+        <div class="card" style="background:var(--bg);margin-bottom:12px;">
+          <div style="font-size:12px;font-weight:800;color:var(--muted);margin-bottom:6px;">SELECTED OUTFITS</div>
+          ${selectedItems.map((p) => {
+            const st = getCatItemState(p);
+            const sub = (Number(p.price) || 0) * (st.qty || 1);
+            return `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px;">
+                <div>
+                  <b>${esc(p.name)}</b> × ${st.qty}
+                  <div style="font-size:11.5px;color:var(--muted);">Size: ${esc(st.size)} · Colour: ${esc(st.color)}</div>
+                </div>
+                <b>${money(sub)}</b>
+              </div>
+            `;
+          }).join("")}
+          <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:15px;font-weight:900;color:var(--accent);">
+            <span>Order Total</span>
+            <span>${money(totalAmount)}</span>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Your Full Name *</label>
+            <input id="custOrdName" placeholder="Enter your name">
+          </div>
+          <div class="field">
+            <label>Phone / WhatsApp Number *</label>
+            <input id="custOrdPhone" type="tel" placeholder="e.g. 98765 43210">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Delivery Address *</label>
+          <textarea id="custOrdAddress" rows="2" placeholder="House / Flat, Street, City, PIN Code"></textarea>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Preferred Payment Method</label>
+            <select id="custOrdPayMethod">
+              <option value="UPI / GPay">UPI / GPay</option>
+              <option value="Bank transfer">Bank Transfer</option>
+              <option value="Cash">Cash on Delivery / Pickup</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Special Notes (optional)</label>
+            <input id="custOrdNotes" placeholder="Custom fit or delivery note">
+          </div>
+        </div>
+
+        <button id="placeCustOrderBtn" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;margin-top:6px;" onclick="window.submitCustomerCatalogueOrder()">
+          ✅ Place Order Now (${money(totalAmount)})
+        </button>
+      </div>
+    </div>
+  `;
+};
+
+window.submitCustomerCatalogueOrder = async () => {
+  const name = (document.getElementById("custOrdName")?.value || "").trim();
+  const phone = (document.getElementById("custOrdPhone")?.value || "").trim();
+  const address = (document.getElementById("custOrdAddress")?.value || "").trim();
+  const payPref = document.getElementById("custOrdPayMethod")?.value || "UPI / GPay";
+  const extraNotes = (document.getElementById("custOrdNotes")?.value || "").trim();
+
+  if (!name) return showToast("Please enter your name");
+  if (!phone) return showToast("Please enter your WhatsApp / phone number");
+  if (!address) return showToast("Please enter your delivery address");
+
+  const selectedItems = catProducts.filter((p) => getCatItemState(p).selected);
+  if (!selectedItems.length) return;
+
+  const btn = document.getElementById("placeCustOrderBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Submitting your order…"; }
+
+  try {
+    const shopId = FIREBASE_CFG.shopId;
+    const now = Date.now();
+    const custId = "cust_" + phone.replace(/\D/g, "").slice(-10) + "_" + uid().slice(-3);
+
+    // 1. Save customer record in Firebase
+    const custRecord = {
+      id: custId,
+      name,
+      phone,
+      address,
+      birthday: "",
+      size: selectedItems.map((p) => getCatItemState(p).size).join(", "),
+      notes: "Ordered via Live Customer Catalogue",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      _u: now
+    };
+    await fbPut(`shops/${shopId}/data/customers/${custId}`, { _u: now, j: JSON.stringify(custRecord) });
+
+    // 2. Create a Sale order record for each selected outfit and decrement live stock
+    let grandTotal = 0;
+    const orderLines = [];
+
+    for (const p of selectedItems) {
+      const st = getCatItemState(p);
+      const orderQty = Math.max(1, Math.min(Number(p.qty) || 1, Number(st.qty) || 1));
+      const lineTotal = orderQty * (Number(p.price) || 0);
+      grandTotal += lineTotal;
+
+      const saleId = uid();
+      const itemNote = `Size: ${st.size} · Colour: ${st.color} · Phone: ${phone} · Pay Pref: ${payPref}${extraNotes ? " · " + extraNotes : ""}`;
+      const newSale = {
+        id: saleId,
+        productId: p.id,
+        productName: p.name,
+        qty: orderQty,
+        price: Number(p.price) || 0,
+        costAtSale: Number(p.cost) || 0,
+        owner: p.owner || "joint",
+        customer: name,
+        customerId: custId,
+        seller: p.owner === "balkees" ? "balkees" : "vaheeda",
+        channel: "WhatsApp",
+        date: todayIso(),
+        notes: itemNote,
+        total: lineTotal,
+        status: "ordered",
+        courier: "",
+        tracking: "",
+        address,
+        pays: [],
+        returns: [],
+        createdAt: nowIso(),
+        _u: now
+      };
+      await fbPut(`shops/${shopId}/data/sales/${saleId}`, { _u: now, j: JSON.stringify(newSale) });
+
+      // Update product stock in Firebase
+      p.qty = Math.max(0, (Number(p.qty) || 0) - orderQty);
+      p._u = now;
+      await fbPut(`shops/${shopId}/data/products/${p.id}`, { _u: now, j: JSON.stringify(p) });
+
+      orderLines.push(`• *${p.name}* × ${orderQty} (Size: ${st.size}, Colour: ${st.color}) — ${money(lineTotal)}`);
+    }
+
+    const waSummary = [
+      `🛍️ *New Live Catalogue Order — ${catShopSettings.shopName}*`,
+      `👤 Customer: *${name}*`,
+      `📞 Phone: ${phone}`,
+      `📍 Address: ${address}`,
+      `💳 Payment Preference: ${payPref}`,
+      extraNotes ? `📝 Note: ${extraNotes}` : "",
+      ``,
+      `*Ordered Outfits:*`,
+      ...orderLines,
+      ``,
+      `💖 *Total Order Amount: ${money(grandTotal)}*`
+    ].filter(Boolean).join("\n");
+
+    const waNum = String(catShopSettings.waCountry || "").replace(/\D/g, "");
+    const waUrl = `https://wa.me/${waNum}?text=${encodeURIComponent(waSummary)}`;
+
+    // Clear selections and refresh live stock
+    catProducts = catProducts.filter((p) => Number(p.qty) > 0);
+    catSelections = {};
+    renderLiveCatalogueDom();
+
+    const modalRoot = document.getElementById("modalRoot");
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+        <div class="modal-sheet" style="text-align:center;">
+          <div style="font-size:46px;margin-bottom:6px;">🎉</div>
+          <h3 style="margin:0 0 6px;font-size:21px;">Order Placed Successfully!</h3>
+          <p style="color:var(--muted);font-size:13px;margin:0 0 12px;">
+            Thank you, <b>${esc(name)}</b>! Your order has been sent directly to <b>${esc(catShopSettings.shopName)}</b> and live stock has been reserved for you.
+          </p>
+          <div class="card" style="background:var(--bg);text-align:left;font-size:12.5px;white-space:pre-wrap;margin-bottom:14px;">${esc(waSummary)}</div>
+          <a href="${waUrl}" target="_blank" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;text-decoration:none;margin-bottom:8px;">
+            💬 Send Order Confirmation on WhatsApp
+          </a>
+          <button class="btn btn-soft" style="width:100%;" onclick="closeModal()">Continue Browsing</button>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    showToast("Could not submit order: " + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = "✅ Place Order Now"; }
+  }
+};
+
+// ============================================================================
+// MODE 1B: Customer Temporary Showcase Page (?item=...)
 // ============================================================================
 async function renderCustomerShareMode(shareId) {
   const root = document.getElementById("app");
@@ -952,9 +1461,19 @@ async function renderCustomerShareMode(shareId) {
                 ${notes ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);">${esc(notes)}</div>` : ""}
               </div>
 
-              <a href="https://wa.me/?text=${waText}" target="_blank" class="btn btn-primary" style="width:100%;margin-top:14px;padding:14px;font-size:15px;text-decoration:none;">
-                💬 Book / Enquire on WhatsApp
-              </a>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;">
+                ${matchedProd && inStock ? `
+                  <button class="btn btn-primary" style="padding:13px;" onclick="renderCustomerLiveCatalogueMode('${matchedProd.id}')">
+                    🛍️ Order Now
+                  </button>
+                ` : ""}
+                <a href="https://wa.me/?text=${waText}" target="_blank" class="btn btn-gold" style="padding:13px;text-decoration:none;">
+                  💬 Ask on WhatsApp
+                </a>
+              </div>
+              <button class="btn btn-soft" style="width:100%;margin-top:8px;" onclick="renderCustomerLiveCatalogueMode()">
+                👗 Browse Full Live Collection & Select Multiple Outfits →
+              </button>
             </div>
           </div>
         </div>
@@ -1220,8 +1739,66 @@ function renderProductCardHtml(p) {
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn btn-gold btn-sm" onclick="openSendToCustomerModal('${p.id}')">📤 Send to Customer</button>
             <button class="btn btn-soft btn-sm" onclick="openProductModal('${p.id}')">✏️ Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteProductById('${p.id}')" title="Delete (Requires Approval)">🗑</button>
           </div>
         </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPendingDeletesBannerHtml() {
+  const list = Array.isArray(db.settings.pendingDeletes) ? db.settings.pendingDeletes : [];
+  if (!list.length) return "";
+  const isAdmin = currentAccount && currentAccount.isAdmin;
+  return `
+    <div class="card" style="border-color:rgba(196,43,69,0.45);background:var(--red-soft);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-weight:800;color:var(--red);">🛡️ Pending Delete Approvals (${list.length})</div>
+        <span class="pill red">${isAdmin ? "Admin Action" : "Awaiting Admin"}</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+        ${isAdmin ? "Review and approve or reject deletion requests submitted by sisters:" : "Your deletion requests are queued for Admin approval:"}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${list.map((req) => `
+          <div style="background:var(--card);padding:10px 12px;border-radius:12px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:800;font-size:13.5px;">[${esc(String(req.targetType || "").toUpperCase())}] ${esc(req.targetLabel)}</div>
+              <div style="font-size:11.5px;color:var(--muted);">Requested by <b>${esc(req.requestedBy)}</b></div>
+            </div>
+            ${isAdmin ? `
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-outline btn-sm" onclick="rejectPendingDeleteItem('${req.id}')">Keep</button>
+                <button class="btn btn-danger btn-sm" onclick="approvePendingDeleteItem('${req.id}')">Approve Delete</button>
+              </div>
+            ` : `<span class="pill amber">⏳ Pending</span>`}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderShareLiveCatalogueCardHtml() {
+  const inStockCount = db.products.filter((p) => (Number(p.qty) || 0) > 0).length;
+  const liveUrl = getLiveCatalogueUrl();
+  return `
+    <div class="card" style="border-color:rgba(200,95,131,0.4);background:linear-gradient(135deg, var(--card), var(--accent-soft));">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div>
+          <div style="font-weight:800;font-size:15px;">🌐 Live Customer Catalogue & Order Link</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">
+            Customers see <b>${inStockCount} live in-stock outfits</b> with clickable multi-photo zoom, can select <b>single or multiple dresses</b>, and tap <b>Make Order</b> directly!
+          </div>
+        </div>
+        <span class="pill green" style="flex-shrink:0;">LIVE</span>
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn btn-primary btn-sm" style="flex:1;" onclick="shareLiveCatalogueLink(true)">📲 WhatsApp Live Catalogue</button>
+        <button class="btn btn-gold btn-sm" onclick="shareLiveCatalogueLink(false)">📤 Share</button>
+        <button class="btn btn-outline btn-sm" onclick="navigator.clipboard.writeText('${liveUrl}');showToast('Live catalogue link copied! 🔗')">📋 Copy Link</button>
+        <a class="btn btn-soft btn-sm" href="${liveUrl}" target="_blank" style="text-decoration:none;">👁 Preview</a>
       </div>
     </div>
   `;
@@ -1249,12 +1826,16 @@ function renderHomeTab() {
       </div>
     ` : ""}
 
+    ${renderPendingDeletesBannerHtml()}
+
     ${db.settings.showQuick !== false ? `
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:9px;">
         <button class="btn btn-primary" onclick="openProductModal()">＋ Add Dress / Stock</button>
         <button class="btn btn-gold" onclick="openSaleModal()">🛍️ Record Sale</button>
       </div>
     ` : ""}
+
+    ${renderShareLiveCatalogueCardHtml()}
 
     ${db.settings.showStats !== false ? `
       <div class="kpi-grid">
@@ -1314,6 +1895,7 @@ function renderStockTab() {
   });
 
   return `
+    ${renderShareLiveCatalogueCardHtml()}
     <div style="display:flex;gap:8px;align-items:center;">
       <input type="search" placeholder="🔍 Search name, code, colour, size…" value="${esc(stockQuery)}" oninput="window.setStockQuery(this.value)">
       <button class="btn btn-primary" style="flex-shrink:0;" onclick="openProductModal()">＋ Add</button>
@@ -1536,12 +2118,15 @@ function renderMoneyTab() {
     <div class="card">
       <h3 style="margin:0 0 10px;">📒 Recent Expenses & Contributions (${db.expenses.length})</h3>
       ${db.expenses.length === 0 ? `<p style="color:var(--muted);margin:0;">No expenses or capital entries yet.</p>` : db.expenses.map((e) => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);">
-          <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);gap:8px;">
+          <div style="flex:1;">
             <div style="font-weight:700;">${esc(e.title)}</div>
             <div style="font-size:12px;color:var(--muted);">${esc(e.date)} · ${esc(e.category)} · by <b>${esc(e.paidBy === "balkees" ? "Balkees" : "Vaheeda")}</b></div>
           </div>
-          <div style="font-weight:800;color:var(--accent);">${money(e.amount)}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="font-weight:800;color:var(--accent);">${money(e.amount)}</div>
+            <button class="btn btn-danger btn-sm" onclick="deleteExpenseItem('${e.id}')">🗑</button>
+          </div>
         </div>
       `).join("")}
     </div>
@@ -1591,9 +2176,12 @@ function renderMoreSettingsTab() {
   const isAdmin = currentAccount && currentAccount.isAdmin;
   const s = db.settings;
   const logoEntry = s.logoAt ? imgMap.get("logo") : null;
+  const myProfileImg = imgMap.get("profile_" + currentAccount.id);
   const channels = Array.isArray(s.channels) && s.channels.length ? s.channels : DEFAULT_SETTINGS.channels;
 
   return `
+    ${renderPendingDeletesBannerHtml()}
+
     <!-- My Profile, Photo & PIN -->
     <details class="set-block" open>
       <summary>👤 My Profile, Photo & PIN (${esc(currentAccount.displayName)})</summary>
@@ -1605,9 +2193,10 @@ function renderMoreSettingsTab() {
             <div style="font-size:12px;color:var(--muted);">${isAdmin ? "Full Administrator Access" : "Co-Founder · Sister Account"}</div>
             <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
               <label class="btn btn-soft btn-sm" style="display:inline-flex;">
-                📸 Upload Photo
+                📸 Upload & Crop Photo
                 <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${currentAccount.id}', this.files[0])">
               </label>
+              ${myProfileImg && myProfileImg.data ? `<button class="btn btn-outline btn-sm" onclick="recropExistingProfilePhoto('${currentAccount.id}')">✂️ Crop / Rotate</button>` : ""}
               <button class="btn btn-outline btn-sm" onclick="pullFromFirebase()">⟳ Sync Now</button>
               <button class="btn btn-outline btn-sm" onclick="lockAndSwitchAccount()">🔒 Switch Account</button>
             </div>
@@ -1922,25 +2511,278 @@ function renderMoreSettingsTab() {
         <summary>👭 Sisters Profiles (Vaheeda & Balkees)</summary>
         <div class="set-body">
           <div style="font-size:12.5px;color:var(--muted);">
-            The boutique co-founders are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>. Upload or update their profile pictures below.
+            The boutique co-founders are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>. Upload or crop/rotate their profile pictures below.
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            ${["vaheeda", "balkees"].map((sid) => `
-              <div class="kpi-box" style="text-align:center;">
-                <div style="margin-bottom:6px;display:flex;justify-content:center;">${getAccountAvatarHtml(sid, "lg")}</div>
-                <div style="font-weight:800;text-transform:capitalize;">${sid}</div>
-                <label class="btn btn-soft btn-sm" style="margin-top:6px;">
-                  📸 Photo
-                  <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
-                </label>
-              </div>
-            `).join("")}
+            ${["vaheeda", "balkees"].map((sid) => {
+              const hasProf = imgMap.get("profile_" + sid)?.data;
+              return `
+                <div class="kpi-box" style="text-align:center;">
+                  <div style="margin-bottom:6px;display:flex;justify-content:center;">${getAccountAvatarHtml(sid, "lg")}</div>
+                  <div style="font-weight:800;text-transform:capitalize;">${sid}</div>
+                  <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;margin-top:6px;">
+                    <label class="btn btn-soft btn-sm">
+                      📸 Upload
+                      <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
+                    </label>
+                    ${hasProf ? `<button class="btn btn-outline btn-sm" onclick="recropExistingProfilePhoto('${sid}')">✂️ Crop</button>` : ""}
+                  </div>
+                </div>
+              `;
+            }).join("")}
           </div>
         </div>
       </details>
     `}
   `;
 }
+
+// ---- Interactive Photo Crop & Rotate Editor Modal ----
+let _cropState = null;
+
+window.openCropRotateModal = function(srcDataUrl, defaultAspect = "square", onSaveCallback, titleText = "✂️ Crop & Rotate Photo") {
+  if (!srcDataUrl) return;
+  const img = new Image();
+  img.onload = () => {
+    _cropState = {
+      img,
+      srcDataUrl,
+      rotation: 0,
+      flipH: false,
+      aspect: defaultAspect, // "square" | "portrait" | "free"
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+      onSave: onSaveCallback,
+      prevModalHtml: document.getElementById("modalRoot")?.innerHTML || ""
+    };
+    renderCropRotateModalDom(titleText);
+  };
+  img.src = srcDataUrl;
+};
+
+function renderCropRotateModalDom(titleText = "✂️ Crop & Rotate Photo") {
+  if (!_cropState) return;
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" style="z-index:260;">
+      <div class="modal-sheet" style="max-width:480px;">
+        <div class="modal-head">
+          <h3>${esc(titleText)}</h3>
+          <button onclick="cancelCropRotateModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+          Drag photo to reposition · Use buttons to rotate, flip, or change aspect ratio
+        </div>
+        <div style="display:flex;justify-content:center;background:#141115;border-radius:16px;padding:12px;overflow:hidden;touch-action:none;">
+          <canvas id="cropCanvas" width="320" height="320" style="max-width:100%;border-radius:10px;cursor:grab;touch-action:none;"></canvas>
+        </div>
+
+        <div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap;">
+          <button class="btn btn-outline btn-sm" onclick="cropRotateAction('rotL')">↺ -90°</button>
+          <button class="btn btn-outline btn-sm" onclick="cropRotateAction('rotR')">↻ +90°</button>
+          <button class="btn btn-outline btn-sm" onclick="cropRotateAction('flip')">↔ Flip</button>
+          <button class="btn btn-outline btn-sm" onclick="cropRotateAction('reset')">⟲ Reset</button>
+        </div>
+
+        <div style="display:flex;gap:6px;justify-content:center;margin-top:8px;">
+          <button id="aspBtn_square" class="btn btn-sm ${_cropState.aspect === 'square' ? 'btn-primary' : 'btn-soft'}" onclick="cropSetAspect('square')">1:1 Square</button>
+          <button id="aspBtn_portrait" class="btn btn-sm ${_cropState.aspect === 'portrait' ? 'btn-primary' : 'btn-soft'}" onclick="cropSetAspect('portrait')">4:5 Outfit</button>
+          <button id="aspBtn_free" class="btn btn-sm ${_cropState.aspect === 'free' ? 'btn-primary' : 'btn-soft'}" onclick="cropSetAspect('free')">Free</button>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+          <span style="font-size:12px;font-weight:700;color:var(--muted);min-width:75px;">Zoom: <b id="cropZoomLbl">${Math.round(_cropState.zoom * 100)}%</b></span>
+          <input type="range" min="100" max="300" value="${Math.round(_cropState.zoom * 100)}" oninput="cropSetZoom(this.value)" style="flex:1;padding:0;">
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <button class="btn btn-outline" onclick="cancelCropRotateModal()">Cancel</button>
+          <button class="btn btn-primary" style="flex:1;" onclick="applyCropRotateModal()">✓ Apply Crop & Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setupCropCanvasInteractions();
+  drawCropPreviewCanvas();
+}
+
+function setupCropCanvasInteractions() {
+  const canvas = document.getElementById("cropCanvas");
+  if (!canvas || !_cropState) return;
+  const startDrag = (x, y) => {
+    _cropState.dragging = true;
+    _cropState.lastX = x;
+    _cropState.lastY = y;
+  };
+  const moveDrag = (x, y) => {
+    if (!_cropState || !_cropState.dragging) return;
+    const dx = (x - _cropState.lastX) / canvas.width;
+    const dy = (y - _cropState.lastY) / canvas.height;
+    _cropState.lastX = x;
+    _cropState.lastY = y;
+    _cropState.panX = Math.max(-0.5, Math.min(0.5, _cropState.panX + dx));
+    _cropState.panY = Math.max(-0.5, Math.min(0.5, _cropState.panY + dy));
+    drawCropPreviewCanvas();
+  };
+  const endDrag = () => { if (_cropState) _cropState.dragging = false; };
+
+  canvas.addEventListener("mousedown", (e) => startDrag(e.clientX, e.clientY));
+  window.addEventListener("mousemove", (e) => moveDrag(e.clientX, e.clientY));
+  window.addEventListener("mouseup", endDrag);
+
+  canvas.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 1) {
+      e.preventDefault();
+      startDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: false });
+  canvas.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 1) {
+      e.preventDefault();
+      moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: false });
+  canvas.addEventListener("touchend", endDrag);
+}
+
+function drawCropPreviewCanvas() {
+  const canvas = document.getElementById("cropCanvas");
+  if (!canvas || !_cropState) return;
+  const st = _cropState;
+  const rot = ((st.rotation % 360) + 360) % 360;
+  const swapped = rot === 90 || rot === 270;
+  const srcW = swapped ? st.img.height : st.img.width;
+  const srcH = swapped ? st.img.width : st.img.height;
+
+  let cW = 300, cH = 300;
+  if (st.aspect === "portrait") { cW = 264; cH = 330; }
+  else if (st.aspect === "free") {
+    const ratio = srcW / Math.max(1, srcH);
+    if (ratio >= 1) { cW = 310; cH = Math.max(180, Math.round(310 / ratio)); }
+    else { cH = 320; cW = Math.max(180, Math.round(320 * ratio)); }
+  }
+  canvas.width = cW;
+  canvas.height = cH;
+
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#19151b";
+  ctx.fillRect(0, 0, cW, cH);
+
+  ctx.save();
+  ctx.translate(cW / 2 + st.panX * cW, cH / 2 + st.panY * cH);
+  ctx.rotate((rot * Math.PI) / 180);
+  ctx.scale(st.flipH ? -st.zoom : st.zoom, st.zoom);
+
+  const scaleCover = Math.max(cW / Math.max(1, srcW), cH / Math.max(1, srcH));
+  const drawW = st.img.width * scaleCover;
+  const drawH = st.img.height * scaleCover;
+  ctx.drawImage(st.img, -drawW / 2, -drawH / 2, drawW, drawH);
+  ctx.restore();
+
+  // Rule-of-thirds crop guide lines
+  ctx.strokeStyle = "rgba(255,255,255,0.38)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo((cW * i) / 3, 0);
+    ctx.lineTo((cW * i) / 3, cH);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, (cH * i) / 3);
+    ctx.lineTo(cW, (cH * i) / 3);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, cW - 2, cH - 2);
+}
+
+window.cropRotateAction = function(act) {
+  if (!_cropState) return;
+  if (act === "rotL") _cropState.rotation = (_cropState.rotation - 90) % 360;
+  if (act === "rotR") _cropState.rotation = (_cropState.rotation + 90) % 360;
+  if (act === "flip") _cropState.flipH = !_cropState.flipH;
+  if (act === "reset") {
+    _cropState.rotation = 0;
+    _cropState.flipH = false;
+    _cropState.zoom = 1;
+    _cropState.panX = 0;
+    _cropState.panY = 0;
+  }
+  drawCropPreviewCanvas();
+};
+
+window.cropSetAspect = function(asp) {
+  if (!_cropState) return;
+  _cropState.aspect = asp;
+  ["square", "portrait", "free"].forEach((k) => {
+    const b = document.getElementById("aspBtn_" + k);
+    if (b) b.className = `btn btn-sm ${k === asp ? "btn-primary" : "btn-soft"}`;
+  });
+  drawCropPreviewCanvas();
+};
+
+window.cropSetZoom = function(val) {
+  if (!_cropState) return;
+  _cropState.zoom = Math.max(1, Math.min(3, Number(val) / 100));
+  const lbl = document.getElementById("cropZoomLbl");
+  if (lbl) lbl.textContent = `${Math.round(_cropState.zoom * 100)}%`;
+  drawCropPreviewCanvas();
+};
+
+window.cancelCropRotateModal = function() {
+  const prev = _cropState?.prevModalHtml || "";
+  _cropState = null;
+  const modalRoot = document.getElementById("modalRoot");
+  if (modalRoot) modalRoot.innerHTML = prev;
+};
+
+window.applyCropRotateModal = function() {
+  if (!_cropState) return;
+  const st = _cropState;
+  const rot = ((st.rotation % 360) + 360) % 360;
+  const swapped = rot === 90 || rot === 270;
+  const srcW = swapped ? st.img.height : st.img.width;
+  const srcH = swapped ? st.img.width : st.img.height;
+
+  let outW = 720, outH = 720;
+  if (st.aspect === "portrait") { outW = 720; outH = 900; }
+  else if (st.aspect === "free") {
+    const ratio = srcW / Math.max(1, srcH);
+    if (ratio >= 1) { outW = 840; outH = Math.max(320, Math.round(840 / ratio)); }
+    else { outH = 840; outW = Math.max(320, Math.round(840 * ratio)); }
+  }
+
+  const outCanvas = document.createElement("canvas");
+  outCanvas.width = outW;
+  outCanvas.height = outH;
+  const ctx = outCanvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, outW, outH);
+
+  ctx.save();
+  ctx.translate(outW / 2 + st.panX * outW, outH / 2 + st.panY * outH);
+  ctx.rotate((rot * Math.PI) / 180);
+  ctx.scale(st.flipH ? -st.zoom : st.zoom, st.zoom);
+
+  const scaleCover = Math.max(outW / Math.max(1, srcW), outH / Math.max(1, srcH));
+  const drawW = st.img.width * scaleCover;
+  const drawH = st.img.height * scaleCover;
+  ctx.drawImage(st.img, -drawW / 2, -drawH / 2, drawW, drawH);
+  ctx.restore();
+
+  const finalDataUrl = outCanvas.toDataURL("image/jpeg", 0.84);
+  const cb = st.onSave;
+  const prev = st.prevModalHtml || "";
+  _cropState = null;
+  const modalRoot = document.getElementById("modalRoot");
+  if (modalRoot) modalRoot.innerHTML = prev;
+  if (typeof cb === "function") cb(finalDataUrl);
+};
 
 window.updateSettingField = function(key, val) {
   db.settings[key] = val;
@@ -1973,18 +2815,19 @@ window.removeSettingListItem = function(key, idx) {
 
 window.uploadLogoImage = async function(file) {
   if (!file) return;
-  showToast("Uploading logo…");
-  const dataUrl = await compressImageFile(file, 256, 0.85);
-  const now = Date.now();
-  await putLocalImage("logo", dataUrl, now, false);
-  db.settings.logoAt = now;
-  db.settings._u = now;
-  saveLocalDb();
-  outbox.add("settings");
-  saveOutbox();
-  pushOutboxToFirebase();
-  renderApp();
-  showToast("Logo updated 🌷");
+  const rawUrl = await compressImageFile(file, 640, 0.88);
+  openCropRotateModal(rawUrl, "square", async (croppedUrl) => {
+    const now = Date.now();
+    await putLocalImage("logo", croppedUrl, now, false);
+    db.settings.logoAt = now;
+    db.settings._u = now;
+    saveLocalDb();
+    outbox.add("settings");
+    saveOutbox();
+    pushOutboxToFirebase();
+    renderApp();
+    showToast("Logo cropped & updated 🌷");
+  }, "✂️ Crop & Rotate Boutique Logo");
 };
 
 window.removeLogoImage = async function() {
@@ -2141,21 +2984,39 @@ window.changeMyOwnPin = function() {
 
 window.uploadProfilePhoto = async function(accId, file) {
   if (!file) return;
-  showToast("Uploading profile photo…");
-  const dataUrl = await compressImageFile(file, 480, 0.82);
-  const now = Date.now();
-  await putLocalImage("profile_" + accId, dataUrl, now, false);
-  db.settings.profilePhotosAt = { ...(db.settings.profilePhotosAt || {}), [accId]: now };
-  db.settings._u = now;
-  saveLocalDb();
-  outbox.add("settings");
-  saveOutbox();
-  pushOutboxToFirebase();
-  renderApp();
-  showToast("Profile photo updated 📸");
+  const rawUrl = await compressImageFile(file, 720, 0.88);
+  openCropRotateModal(rawUrl, "square", async (croppedUrl) => {
+    const now = Date.now();
+    await putLocalImage("profile_" + accId, croppedUrl, now, false);
+    db.settings.profilePhotosAt = { ...(db.settings.profilePhotosAt || {}), [accId]: now };
+    db.settings._u = now;
+    saveLocalDb();
+    outbox.add("settings");
+    saveOutbox();
+    pushOutboxToFirebase();
+    renderApp();
+    showToast("Profile photo cropped & updated 📸");
+  }, `✂️ Crop & Rotate Profile Photo (${accId.toUpperCase()})`);
 };
 
-// ---- Add / Edit Product Modal (with Multiple Photo Upload) ----
+window.recropExistingProfilePhoto = function(accId) {
+  const im = imgMap.get("profile_" + accId);
+  if (!im || !im.data) return showToast("Upload a photo first");
+  openCropRotateModal(im.data, "square", async (croppedUrl) => {
+    const now = Date.now();
+    await putLocalImage("profile_" + accId, croppedUrl, now, false);
+    db.settings.profilePhotosAt = { ...(db.settings.profilePhotosAt || {}), [accId]: now };
+    db.settings._u = now;
+    saveLocalDb();
+    outbox.add("settings");
+    saveOutbox();
+    pushOutboxToFirebase();
+    renderApp();
+    showToast("Profile photo updated ✨");
+  }, `✂️ Crop & Rotate Profile Photo (${accId.toUpperCase()})`);
+};
+
+// ---- Add / Edit Product Modal (with Multiple Photo Upload + Crop & Rotate) ----
 let draftPhotos = []; // Array of { id, data }
 let editingProdId = null;
 
@@ -2176,6 +3037,21 @@ window.openProductModal = function(prodId = null) {
   renderProductModalDom(existing);
 };
 
+function readCurrentProductDraftForm() {
+  return {
+    id: editingProdId,
+    name: document.getElementById("pName")?.value || "",
+    code: document.getElementById("pCode")?.value || "",
+    category: document.getElementById("pCat")?.value || "Kurti",
+    qty: document.getElementById("pQty")?.value ?? 1,
+    variant: document.getElementById("pVar")?.value || "",
+    color: document.getElementById("pCol")?.value || "",
+    cost: document.getElementById("pCost")?.value || "",
+    price: document.getElementById("pPrice")?.value || "",
+    owner: document.getElementById("pOwner")?.value || "joint"
+  };
+}
+
 function renderProductModalDom(existing) {
   const p = existing || { name: "", code: "", category: "Kurti", variant: "M, L, XL", color: "", cost: "", price: "", qty: 1, low: 2, owner: "joint", notes: "" };
   const modalRoot = document.getElementById("modalRoot");
@@ -2183,24 +3059,25 @@ function renderProductModalDom(existing) {
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>${existing ? "✏️ Edit Outfit" : "👗 Add New Outfit"}</h3>
+          <h3>${editingProdId ? "✏️ Edit Outfit" : "👗 Add New Outfit"}</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
         </div>
 
         <div class="field">
-          <label>📸 Product Photos (${draftPhotos.length} uploaded · Multiple supported)</label>
+          <label>📸 Product Photos (${draftPhotos.length} uploaded · Tap ✂️ on any photo to crop/rotate)</label>
           <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;align-items:center;">
-            <label class="btn btn-soft" style="height:82px;min-width:92px;flex-direction:column;font-size:12px;flex-shrink:0;">
+            <label class="btn btn-soft" style="height:88px;min-width:94px;flex-direction:column;font-size:12px;flex-shrink:0;">
               <span style="font-size:22px;">📷</span>
               <span>Add Photos</span>
               <input type="file" accept="image/*" multiple style="display:none;" onchange="handleMultiPhotoSelect(this.files)">
             </label>
             ${draftPhotos.map((ph, idx) => `
-              <div style="position:relative;width:76px;height:82px;border-radius:12px;overflow:hidden;border:2px solid ${idx === 0 ? 'var(--accent)' : 'var(--line)'};flex-shrink:0;">
-                <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;" onclick="makeDraftPhotoCover(${idx})">
-                <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,0.7);color:#fff;font-size:9px;padding:1px 5px;border-radius:6px;">
+              <div style="position:relative;width:82px;height:88px;border-radius:12px;overflow:hidden;border:2px solid ${idx === 0 ? 'var(--accent)' : 'var(--line)'};flex-shrink:0;">
+                <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;" onclick="makeDraftPhotoCover(${idx})" title="Tap to set as cover">
+                <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,0.72);color:#fff;font-size:9px;padding:1px 5px;border-radius:6px;">
                   ${idx === 0 ? "★ Cover" : `#${idx + 1}`}
                 </span>
+                <button onclick="cropDraftPhotoAtIndex(${idx})" style="position:absolute;bottom:2px;right:2px;background:rgba(200,95,131,0.92);color:#fff;padding:1px 5px;border-radius:6px;font-size:10px;font-weight:700;" title="Crop & Rotate">✂️</button>
                 <button onclick="removeDraftPhoto(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.85);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;">✕</button>
               </div>
             `).join("")}
@@ -2263,7 +3140,7 @@ function renderProductModalDom(existing) {
         </div>
 
         <div style="display:flex;gap:8px;margin-top:14px;">
-          ${existing ? `<button class="btn btn-danger" onclick="deleteProductById('${existing.id}')">🗑 Delete</button>` : ""}
+          ${editingProdId ? `<button class="btn btn-danger" onclick="deleteProductById('${editingProdId}')">🗑 Delete</button>` : ""}
           <button class="btn btn-primary" style="flex:1;" onclick="saveProductFromModal()">💾 Save Outfit</button>
         </div>
       </div>
@@ -2273,55 +3150,43 @@ function renderProductModalDom(existing) {
 
 window.handleMultiPhotoSelect = async function(fileList) {
   if (!fileList || !fileList.length) return;
-  const curState = {
-    name: document.getElementById("pName")?.value || "",
-    code: document.getElementById("pCode")?.value || "",
-    category: document.getElementById("pCat")?.value || "Kurti",
-    qty: document.getElementById("pQty")?.value || 1,
-    variant: document.getElementById("pVar")?.value || "",
-    color: document.getElementById("pCol")?.value || "",
-    cost: document.getElementById("pCost")?.value || "",
-    price: document.getElementById("pPrice")?.value || "",
-    owner: document.getElementById("pOwner")?.value || "joint"
-  };
-  for (const file of Array.from(fileList)) {
-    const dataUrl = await compressImageFile(file);
-    const pid = draftPhotos.length === 0 ? window._draftProdBaseId : `${window._draftProdBaseId}_p${ uid().slice(-4) }`;
+  const curState = readCurrentProductDraftForm();
+  const files = Array.from(fileList);
+  for (const file of files) {
+    const dataUrl = await compressImageFile(file, 960, 0.85);
+    const pid = draftPhotos.length === 0 ? window._draftProdBaseId : `${window._draftProdBaseId}_p${uid().slice(-4)}`;
     draftPhotos.push({ id: pid, data: dataUrl });
   }
   renderProductModalDom(curState);
+  if (files.length === 1) {
+    const lastIdx = draftPhotos.length - 1;
+    window.cropDraftPhotoAtIndex(lastIdx);
+  } else {
+    showToast(`${files.length} photos added · Tap ✂️ on any photo to crop/rotate`);
+  }
+};
+
+window.cropDraftPhotoAtIndex = function(idx) {
+  const ph = draftPhotos[idx];
+  if (!ph) return;
+  const curState = readCurrentProductDraftForm();
+  openCropRotateModal(ph.data, "portrait", (croppedDataUrl) => {
+    draftPhotos[idx].data = croppedDataUrl;
+    renderProductModalDom(curState);
+    showToast("Photo cropped & rotated ✂️");
+  }, `✂️ Crop & Rotate Outfit Photo #${idx + 1}`);
 };
 
 window.makeDraftPhotoCover = function(idx) {
   if (idx <= 0 || idx >= draftPhotos.length) return;
   const [chosen] = draftPhotos.splice(idx, 1);
   draftPhotos.unshift(chosen);
-  renderProductModalDom({
-    name: document.getElementById("pName")?.value || "",
-    code: document.getElementById("pCode")?.value || "",
-    category: document.getElementById("pCat")?.value || "Kurti",
-    qty: document.getElementById("pQty")?.value || 1,
-    variant: document.getElementById("pVar")?.value || "",
-    color: document.getElementById("pCol")?.value || "",
-    cost: document.getElementById("pCost")?.value || "",
-    price: document.getElementById("pPrice")?.value || "",
-    owner: document.getElementById("pOwner")?.value || "joint"
-  });
+  renderProductModalDom(readCurrentProductDraftForm());
 };
 
 window.removeDraftPhoto = function(idx) {
   draftPhotos.splice(idx, 1);
-  renderProductModalDom({
-    name: document.getElementById("pName")?.value || "",
-    code: document.getElementById("pCode")?.value || "",
-    category: document.getElementById("pCat")?.value || "Kurti",
-    qty: document.getElementById("pQty")?.value || 1,
-    variant: document.getElementById("pVar")?.value || "",
-    color: document.getElementById("pCol")?.value || "",
-    cost: document.getElementById("pCost")?.value || "",
-    price: document.getElementById("pPrice")?.value || "",
-    owner: document.getElementById("pOwner")?.value || "joint"
-  });
+  renderProductModalDom(readCurrentProductDraftForm());
 };
 
 window.saveProductFromModal = async function() {
@@ -2384,16 +3249,177 @@ window.adjustProductQty = function(prodId, delta) {
   pushOutboxToFirebase();
 };
 
-window.deleteProductById = function(prodId) {
-  db.products = db.products.filter((x) => x.id !== prodId);
-  db.tombs.push({ c: "products", id: prodId, _u: Date.now() });
+// ---- Delete Approval Workflow (Admin Approval or Admin PIN Required) ----
+let _pendingDeleteTarget = null;
+
+function executeApprovedDeletion(targetType, targetId) {
+  const now = Date.now();
+  if (targetType === "product") {
+    db.products = db.products.filter((x) => x.id !== targetId);
+    db.tombs.push({ c: "products", id: targetId, _u: now });
+    outbox.add(`products/${targetId}`);
+  } else if (targetType === "sale") {
+    db.sales = db.sales.filter((x) => x.id !== targetId);
+    db.tombs.push({ c: "sales", id: targetId, _u: now });
+    outbox.add(`sales/${targetId}`);
+  } else if (targetType === "expense") {
+    db.expenses = db.expenses.filter((x) => x.id !== targetId);
+    db.tombs.push({ c: "expenses", id: targetId, _u: now });
+    outbox.add(`expenses/${targetId}`);
+  }
+  db.settings.pendingDeletes = (db.settings.pendingDeletes || []).filter(
+    (r) => !(r.targetType === targetType && r.targetId === targetId)
+  );
+  db.settings._u = now;
+  outbox.add("settings");
   saveLocalDb();
-  outbox.add(`products/${prodId}`);
   saveOutbox();
   closeModal();
   renderApp();
   pushOutboxToFirebase();
-  showToast("Outfit deleted");
+}
+
+window.requestDeleteApproval = function(targetType, targetId, targetLabel) {
+  _pendingDeleteTarget = {
+    id: uid(),
+    targetType,
+    targetId,
+    targetLabel,
+    requestedBy: currentAccount ? currentAccount.displayName : "Sister",
+    createdAt: Date.now()
+  };
+  const isAdmin = currentAccount && currentAccount.isAdmin;
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet" style="max-width:440px;">
+        <div class="modal-head">
+          <h3 style="color:var(--red);">🛡️ ${isAdmin ? "Confirm Delete Approval" : "Admin Approval Required"}</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        <div class="card" style="background:var(--red-soft);border-color:rgba(196,43,69,0.35);margin-bottom:12px;">
+          <div style="font-size:11.5px;font-weight:800;color:var(--red);text-transform:uppercase;">${esc(targetType)} TO DELETE</div>
+          <div style="font-size:15px;font-weight:800;margin-top:2px;">${esc(targetLabel)}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px;">Initiated by <b>${esc(_pendingDeleteTarget.requestedBy)}</b></div>
+        </div>
+        ${isAdmin ? `
+          <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">
+            You are signed in as <b>Admin</b>. Approve and permanently delete this item from all synced devices?
+          </p>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-danger" style="flex:1;" onclick="confirmDeleteWithApproval()">✓ Approve & Delete Now</button>
+          </div>
+        ` : `
+          <p style="font-size:13px;color:var(--muted);margin:0 0 10px;">
+            Deletions require <b>Admin approval</b>. Send a delete request to Admin's queue, or enter the Admin PIN for immediate deletion:
+          </p>
+          <button class="btn btn-primary" style="width:100%;margin-bottom:12px;" onclick="submitDeleteRequestForAdmin()">📨 Send Delete Request to Admin</button>
+          <div style="border-top:1px solid var(--line);padding-top:10px;">
+            <div class="field" style="margin-bottom:8px;">
+              <label>Or Enter Admin PIN for Immediate Approval</label>
+              <input type="password" id="delAdminPinInput" inputmode="numeric" placeholder="Enter Admin PIN">
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+              <button class="btn btn-danger" style="flex:1;" onclick="confirmDeleteWithApproval()">🔐 Verify PIN & Delete</button>
+            </div>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+};
+
+window.submitDeleteRequestForAdmin = function() {
+  if (!_pendingDeleteTarget) return;
+  const list = Array.isArray(db.settings.pendingDeletes) ? [...db.settings.pendingDeletes] : [];
+  const filtered = list.filter((r) => !(r.targetType === _pendingDeleteTarget.targetType && r.targetId === _pendingDeleteTarget.targetId));
+  filtered.unshift(_pendingDeleteTarget);
+  db.settings.pendingDeletes = filtered;
+  db.settings._u = Date.now();
+  _pendingDeleteTarget = null;
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  closeModal();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Delete request sent for Admin approval 🛡️");
+};
+
+window.confirmDeleteWithApproval = function() {
+  if (!_pendingDeleteTarget) return;
+  const isAdmin = currentAccount && currentAccount.isAdmin;
+  if (!isAdmin) {
+    const pin = (document.getElementById("delAdminPinInput")?.value || "").trim();
+    const expectedAdminPin = String((db.settings.pins && db.settings.pins.admin) || "5603");
+    if (pin !== expectedAdminPin) {
+      return showToast("Invalid Admin PIN — or tap 'Send Delete Request to Admin'");
+    }
+  }
+  const { targetType, targetId, targetLabel } = _pendingDeleteTarget;
+  _pendingDeleteTarget = null;
+  executeApprovedDeletion(targetType, targetId);
+  showToast(`Deleted: ${targetLabel} ✓`);
+};
+
+window.approvePendingDeleteItem = function(reqId) {
+  if (!currentAccount || !currentAccount.isAdmin) return showToast("Only Admin can approve delete requests");
+  const list = Array.isArray(db.settings.pendingDeletes) ? db.settings.pendingDeletes : [];
+  const req = list.find((r) => r.id === reqId);
+  if (!req) return;
+  executeApprovedDeletion(req.targetType, req.targetId);
+  showToast(`Approved deletion: ${req.targetLabel} ✓`);
+};
+
+window.rejectPendingDeleteItem = function(reqId) {
+  const list = Array.isArray(db.settings.pendingDeletes) ? db.settings.pendingDeletes : [];
+  db.settings.pendingDeletes = list.filter((r) => r.id !== reqId);
+  db.settings._u = Date.now();
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+  showToast("Delete request dismissed — item kept 🛡️");
+};
+
+window.deleteProductById = function(prodId) {
+  const p = db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  requestDeleteApproval("product", prodId, `${p.name} (${money(p.price)})`);
+};
+
+// ---- Live Customer Catalogue Share Helpers ----
+window.getLiveCatalogueUrl = function() {
+  const baseUrl = window.location.origin.startsWith("http")
+    ? (window.location.origin + window.location.pathname.replace(/\/index\.html$/, "").replace(/\/$/, ""))
+    : "https://playnationx.github.io/sisora-boutique";
+  return `${baseUrl}/?catalogue=live`;
+};
+
+window.buildLiveCatalogueShareMessage = function() {
+  const inStock = db.products.filter((p) => (Number(p.qty) || 0) > 0).length;
+  const url = getLiveCatalogueUrl();
+  return `✨ *${db.settings.shopName || "SISORA Boutique"} — Live Collection Catalogue* ✨\n👗 *${inStock} Outfits Available in Live Stock*\n\n📸 Tap any photo to view full screen, select *single or multiple outfits*, and tap *Make Order* directly:\n🔗 ${url}`;
+};
+
+window.shareLiveCatalogueLink = async function(viaWhatsApp = false) {
+  await pushOutboxToFirebase();
+  const msg = buildLiveCatalogueShareMessage();
+  const url = getLiveCatalogueUrl();
+  if (viaWhatsApp) {
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+    return;
+  }
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: `${db.settings.shopName} Live Catalogue`, text: msg, url });
+      return;
+    } catch (e) {}
+  }
+  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
 };
 
 // ---- Multi-Photo Gallery Lightbox ----
@@ -2673,14 +3699,15 @@ window.markSalePaid = function(saleId) {
 };
 
 window.deleteSaleItem = function(saleId) {
-  db.sales = db.sales.filter((x) => x.id !== saleId);
-  db.tombs.push({ c: "sales", id: saleId, _u: Date.now() });
-  saveLocalDb();
-  outbox.add(`sales/${saleId}`);
-  saveOutbox();
-  renderApp();
-  pushOutboxToFirebase();
-  showToast("Sale deleted");
+  const s = db.sales.find((x) => x.id === saleId);
+  if (!s) return;
+  requestDeleteApproval("sale", saleId, `${s.productName} × ${s.qty} (${s.customer || "Walk-in"} · ${money(s.total)})`);
+};
+
+window.deleteExpenseItem = function(expId) {
+  const e = db.expenses.find((x) => x.id === expId);
+  if (!e) return;
+  requestDeleteApproval("expense", expId, `${e.title} (${money(e.amount)})`);
 };
 
 // ---- Expense / Contribution Modal ----
@@ -2758,6 +3785,11 @@ window.saveExpenseFromModal = function() {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   }
   const params = new URLSearchParams(window.location.search);
+  const catalogueParam = params.get("catalogue");
+  if (catalogueParam) {
+    await renderCustomerLiveCatalogueMode();
+    return;
+  }
   const shareItem = params.get("item");
   if (shareItem) {
     await renderCustomerShareMode(shareItem);
