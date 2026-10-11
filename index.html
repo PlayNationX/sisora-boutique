@@ -296,6 +296,43 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   background: var(--gold-soft); border: 1px solid #e6c97a; color: #6e4e08;
   border-radius: 14px; padding: 11px 13px; font-size: 12.5px; margin-top: 12px;
 }
+/* Expandable Settings Blocks */
+details.set-block {
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+details.set-block > summary {
+  list-style: none; padding: 14px 16px; font-weight: 800; font-size: 15px;
+  cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+  user-select: none;
+}
+details.set-block > summary::-webkit-details-marker { display: none; }
+details.set-block > summary::after {
+  content: "▾"; color: var(--muted); font-size: 14px; transition: transform .2s;
+}
+details.set-block[open] > summary { border-bottom: 1px solid var(--line); }
+details.set-block[open] > summary::after { transform: rotate(180deg); }
+.set-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 11px; }
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 0; border-bottom: 1px dashed var(--line);
+}
+.toggle-row:last-of-type { border-bottom: none; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
+.chip-item {
+  display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft);
+  color: var(--accent); padding: 5px 10px; border-radius: 99px; font-size: 12px; font-weight: 700;
+}
+.chip-del {
+  width: 18px; height: 18px; border-radius: 50%; background: var(--paper); color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 800; cursor: pointer;
+}
+.swatch-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 4px; }
+.swatch-dot {
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--line); transition: transform .12s;
+}
+.swatch-dot.active { border: 3px solid var(--ink); transform: scale(1.08); }
 </style>
 </head>
 <body>
@@ -329,6 +366,11 @@ const FIXED_SISTERS = [
   { id: "balkees", name: "Balkees" }
 ];
 
+const CURRENCY_SYMBOLS = {
+  INR: "₹", AED: "AED ", SAR: "SAR ", QAR: "QAR ", OMR: "OMR ", KWD: "KWD ", BHD: "BHD ",
+  USD: "$", EUR: "€", GBP: "£", PKR: "Rs ", BDT: "৳", LKR: "Rs "
+};
+
 const DEFAULT_SETTINGS = {
   shopName: "SISORA Ethnic Wear",
   brand: "SISORA",
@@ -339,15 +381,29 @@ const DEFAULT_SETTINGS = {
   pins: { admin: "5603", vaheeda: "2515", balkees: "8305" },
   profilePhotosAt: {},
   currency: "INR",
+  dateFmt: "short",
   defaultLow: 2,
+  defaultPayment: "paid",
+  defaultStatus: "ordered",
+  defaultChannel: "",
+  dueDays: 7,
+  waCountry: "",
+  msgRemind: "Hi {name}, a gentle reminder that {amount} is pending for {item}. Thank you! 💕 – {shop}",
+  msgShipped: "Hi {name}, your order ({item}) is on its way with {courier}. Tracking: {tracking}. Thank you! 💕 – {shop}",
   theme: "light",
   accent: "#c85f83",
+  font: "system",
+  textSize: 100,
+  radius: "classic",
   compact: false,
   privacy: false,
+  confirmDelete: true,
   showHero: true,
   showStats: true,
   showQuick: true,
   showLow: true,
+  showNotice: true,
+  lowCount: 3,
   categories: ["Kurti", "Kurti Set", "Salwar Suit", "Anarkali", "Lehenga", "Saree", "Abaya / Kaftan", "Dupatta / Stole", "Co-ord Set", "Gown / Party Wear", "Fabric / Unstitched", "Accessories"],
   channels: ["Instagram", "WhatsApp", "Walk-in", "Reference", "Exhibition", "Reseller"],
   payMethods: ["UPI / GPay", "Cash", "Bank transfer", "Card", "Other"],
@@ -387,7 +443,9 @@ function nowIso() {
 }
 function money(n) {
   const val = Number(n) || 0;
-  return "₹" + val.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  const cur = (db && db.settings && db.settings.currency) || "INR";
+  const sym = CURRENCY_SYMBOLS[cur] || (cur + " ");
+  return sym + val.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -445,10 +503,15 @@ function loadLocalAccount() {
 
 function applyTheme() {
   const s = db.settings || DEFAULT_SETTINGS;
-  document.documentElement.setAttribute("data-theme", s.theme === "dark" ? "dark" : "light");
+  const sysDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const isDark = s.theme === "dark" || s.theme === "oled" || ((s.theme === "auto" || s.theme === "autooled") && sysDark);
+  document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
   if (s.accent) {
     document.documentElement.style.setProperty("--accent", s.accent);
   }
+  const radMap = { sharp: "8px", classic: "18px", pillow: "26px" };
+  document.documentElement.style.setProperty("--radius", radMap[s.radius] || "18px");
+  document.documentElement.style.fontSize = ((Number(s.textSize) || 100) / 100 * 16) + "px";
 }
 
 // ---- IndexedDB for Product & Profile Images ----
@@ -1485,107 +1548,394 @@ function renderMoneyTab() {
   `;
 }
 
-// ---- Role-Based Settings Tab (Admin vs Sisters Vaheeda & Balkees) ----
+// ---- Complete Settings Tab with all 5 Expandable Settings Blocks ----
+const ACCENT_SWATCHES = ["#c85f83", "#9b6bd6", "#e0687a", "#d98a3d", "#3f9d86", "#4a86d6", "#7a5c4a", "#2f2a30"];
+const CURRENCY_OPTIONS = [
+  ["INR", "₹ Indian Rupee (INR)"],
+  ["AED", "AED UAE Dirham"],
+  ["SAR", "SAR Saudi Riyal"],
+  ["QAR", "QAR Qatari Riyal"],
+  ["OMR", "OMR Omani Rial"],
+  ["KWD", "KWD Kuwaiti Dinar"],
+  ["BHD", "BHD Bahraini Dinar"],
+  ["USD", "$ US Dollar (USD)"],
+  ["EUR", "€ Euro (EUR)"],
+  ["GBP", "£ British Pound (GBP)"],
+  ["PKR", "PKR Pakistani Rupee"],
+  ["BDT", "BDT Bangladeshi Taka"],
+  ["LKR", "LKR Sri Lankan Rupee"]
+];
+
+function renderChipEditorHtml(key, title, placeholder) {
+  const items = Array.isArray(db.settings[key]) && db.settings[key].length ? db.settings[key] : (DEFAULT_SETTINGS[key] || []);
+  return `
+    <div style="margin-bottom:6px;">
+      <label style="font-size:12.5px;font-weight:800;color:var(--muted);display:block;margin-bottom:4px;">${esc(title)}</label>
+      <div class="chip-list">
+        ${items.map((item, idx) => `
+          <span class="chip-item">
+            ${esc(item)}
+            ${items.length > 1 ? `<span class="chip-del" onclick="removeSettingListItem('${key}', ${idx})">×</span>` : ""}
+          </span>
+        `).join("")}
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="chipInput_${key}" placeholder="${esc(placeholder)}" style="flex:1;">
+        <button class="btn btn-soft btn-sm" onclick="addSettingListItem('${key}')">Add</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderMoreSettingsTab() {
   const isAdmin = currentAccount && currentAccount.isAdmin;
   const s = db.settings;
+  const logoEntry = s.logoAt ? imgMap.get("logo") : null;
+  const channels = Array.isArray(s.channels) && s.channels.length ? s.channels : DEFAULT_SETTINGS.channels;
 
   return `
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;">
-        ${getAccountAvatarHtml(currentAccount.id, "xl")}
-        <div style="flex:1;">
-          <div style="font-size:18px;font-weight:800;">${esc(currentAccount.displayName)} ${currentAccount.emoji}</div>
-          <div style="font-size:12.5px;color:var(--muted);">${isAdmin ? "Full Administrator Access" : "Sister Partner · Application Settings"}</div>
-          <label class="btn btn-soft btn-sm" style="margin-top:8px;display:inline-flex;">
-            📸 Change My Profile Photo
-            <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${currentAccount.id}', this.files[0])">
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3 style="margin:0 0 10px;">🔐 Change My PIN (${esc(currentAccount.displayName)} Only)</h3>
-      <div class="field-row">
-        <div class="field">
-          <label>Current PIN</label>
-          <input type="password" id="curPinInput" inputmode="numeric" placeholder="Current PIN">
-        </div>
-        <div class="field">
-          <label>New 4-Digit PIN</label>
-          <input type="password" id="newPinInput" inputmode="numeric" placeholder="New PIN">
-        </div>
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="changeMyOwnPin()">Update My PIN</button>
-    </div>
-
-    <div class="card">
-      <h3 style="margin:0 0 10px;">🎨 Look & Feel (Application Settings)</h3>
-      <div class="field-row">
-        <div class="field">
-          <label>Theme</label>
-          <select onchange="updateSettingField('theme', this.value)">
-            <option value="light" ${s.theme !== 'dark' ? 'selected' : ''}>☀️ Light Ivory</option>
-            <option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>🌙 Luxury Dark</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Accent Colour</label>
-          <select onchange="updateSettingField('accent', this.value)">
-            <option value="#c85f83" ${s.accent === '#c85f83' ? 'selected' : ''}>🌷 Boutique Rose</option>
-            <option value="#b8860b" ${s.accent === '#b8860b' ? 'selected' : ''}>✨ Royal Gold</option>
-            <option value="#237a57" ${s.accent === '#237a57' ? 'selected' : ''}>🌿 Emerald</option>
-            <option value="#5b4b8a" ${s.accent === '#5b4b8a' ? 'selected' : ''}>👑 Velvet Plum</option>
-          </select>
-        </div>
-      </div>
-      <label style="display:flex;align-items:center;gap:10px;font-weight:700;margin-top:6px;">
-        <input type="checkbox" style="width:20px;height:20px;" ${s.privacy ? 'checked' : ''} onchange="updateSettingField('privacy', this.checked)">
-        🙈 Hide Cost & Profit on Home / Stock screens
-      </label>
-    </div>
-
-    ${isAdmin ? `
-      <div class="card">
-        <h3 style="margin:0 0 10px;">👭 Sisters Profile Pictures (Vaheeda & Balkees)</h3>
-        <p style="font-size:12.5px;color:var(--muted);margin:0 0 12px;">Sisters are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>.</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          ${["vaheeda", "balkees"].map((sid) => `
-            <div class="kpi-box" style="text-align:center;">
-              <div style="margin-bottom:6px;">${getAccountAvatarHtml(sid, "lg")}</div>
-              <div style="font-weight:800;text-transform:capitalize;">${sid}</div>
-              <label class="btn btn-soft btn-sm" style="margin-top:6px;">
+    <!-- My Profile, Photo & PIN -->
+    <details class="set-block" open>
+      <summary>👤 My Profile, Photo & PIN (${esc(currentAccount.displayName)})</summary>
+      <div class="set-body">
+        <div style="display:flex;align-items:center;gap:12px;">
+          ${getAccountAvatarHtml(currentAccount.id, "xl")}
+          <div style="flex:1;">
+            <div style="font-size:17px;font-weight:800;">${esc(currentAccount.displayName)} ${currentAccount.emoji}</div>
+            <div style="font-size:12px;color:var(--muted);">${isAdmin ? "Full Administrator Access" : "Co-Founder · Sister Account"}</div>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+              <label class="btn btn-soft btn-sm" style="display:inline-flex;">
                 📸 Upload Photo
-                <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
+                <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${currentAccount.id}', this.files[0])">
               </label>
+              <button class="btn btn-outline btn-sm" onclick="pullFromFirebase()">⟳ Sync Now</button>
+              <button class="btn btn-outline btn-sm" onclick="lockAndSwitchAccount()">🔒 Switch Account</button>
             </div>
-          `).join("")}
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--line);padding-top:10px;margin-top:4px;">
+          <div style="font-weight:800;font-size:13.5px;margin-bottom:6px;">🔐 Change My PIN (${esc(currentAccount.displayName)} Only)</div>
+          <div class="field-row">
+            <div class="field" style="margin-bottom:6px;">
+              <label>Current PIN</label>
+              <input type="password" id="curPinInput" inputmode="numeric" placeholder="Current PIN">
+            </div>
+            <div class="field" style="margin-bottom:6px;">
+              <label>New PIN (4+ digits)</label>
+              <input type="password" id="newPinInput" inputmode="numeric" placeholder="New PIN">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="changeMyOwnPin()">Update My PIN</button>
         </div>
       </div>
+    </details>
 
-      <div class="card">
-        <h3 style="margin:0 0 10px;">🏪 Shop Identity & Admin Settings</h3>
+    <!-- Look & feel -->
+    <details class="set-block">
+      <summary>🎨 Look & feel</summary>
+      <div class="set-body">
+        <div class="field-row">
+          <div class="field">
+            <label>Theme</label>
+            <select onchange="updateSettingField('theme', this.value)">
+              <option value="light" ${s.theme === 'light' ? 'selected' : ''}>☀️ Light</option>
+              <option value="dark" ${s.theme === 'dark' ? 'selected' : ''}>🌙 Dark</option>
+              <option value="oled" ${s.theme === 'oled' ? 'selected' : ''}>⚫ OLED black</option>
+              <option value="auto" ${s.theme === 'auto' ? 'selected' : ''}>📱 Auto (light / dark)</option>
+              <option value="autooled" ${s.theme === 'autooled' ? 'selected' : ''}>📱 Auto (light / OLED)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Font style</label>
+            <select onchange="updateSettingField('font', this.value)">
+              <option value="system" ${(s.font || 'system') === 'system' ? 'selected' : ''}>Clean (default)</option>
+              <option value="serif" ${s.font === 'serif' ? 'selected' : ''}>Elegant serif</option>
+              <option value="rounded" ${s.font === 'rounded' ? 'selected' : ''}>Soft rounded</option>
+              <option value="hand" ${s.font === 'hand' ? 'selected' : ''}>Handwritten</option>
+              <option value="mono" ${s.font === 'mono' ? 'selected' : ''}>Typewriter</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:700;color:var(--muted);">Accent colour</label>
+          <div class="swatch-row">
+            ${ACCENT_SWATCHES.map((hex) => `
+              <div class="swatch-dot ${(s.accent || '#c85f83').toLowerCase() === hex.toLowerCase() ? 'active' : ''}"
+                   style="background:${hex};"
+                   onclick="updateSettingField('accent', '${hex}')"></div>
+            `).join("")}
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Text size</label>
+            <select onchange="updateSettingField('textSize', Number(this.value) || 100)">
+              <option value="90" ${Number(s.textSize) === 90 ? 'selected' : ''}>90% (Small)</option>
+              <option value="100" ${(Number(s.textSize) || 100) === 100 ? 'selected' : ''}>100% (Default)</option>
+              <option value="110" ${Number(s.textSize) === 110 ? 'selected' : ''}>110% (Large)</option>
+              <option value="120" ${Number(s.textSize) === 120 ? 'selected' : ''}>120% (Extra Large)</option>
+              <option value="130" ${Number(s.textSize) === 130 ? 'selected' : ''}>130% (Max)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Corners</label>
+            <select onchange="updateSettingField('radius', this.value)">
+              <option value="sharp" ${s.radius === 'sharp' ? 'selected' : ''}>Sharp</option>
+              <option value="classic" ${(s.radius || 'classic') === 'classic' ? 'selected' : ''}>Classic</option>
+              <option value="pillow" ${s.radius === 'pillow' ? 'selected' : ''}>Extra round</option>
+            </select>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Compact layout</div>
+            <div style="font-size:11.5px;color:var(--muted);">Tighter spacing, fits more on screen</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.compact ? 'checked' : ''} onchange="updateSettingField('compact', this.checked)">
+        </div>
+        <button class="btn btn-soft btn-sm" onclick="resetLookToDefault()">Reset look to default</button>
+      </div>
+    </details>
+
+    <!-- 1. Names & greetings -->
+    <details class="set-block">
+      <summary>🏷️ Names & greetings</summary>
+      <div class="set-body">
         <div class="field">
-          <label>Shop Name</label>
+          <label>Boutique name</label>
           <input value="${esc(s.shopName)}" onchange="updateSettingField('shopName', this.value)">
         </div>
-        <div class="field">
-          <label>Tagline</label>
-          <input value="${esc(s.tagline)}" onchange="updateSettingField('tagline', this.value)">
+        <div class="field-row">
+          <div class="field">
+            <label>App title (top of screen)</label>
+            <input value="${esc(s.brand || 'SISORA')}" onchange="updateSettingField('brand', this.value)">
+          </div>
+          <div class="field">
+            <label>Tagline (under the title)</label>
+            <input value="${esc(s.tagline)}" onchange="updateSettingField('tagline', this.value)">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Logo letter or emoji</label>
+            <input maxlength="4" value="${esc(s.logo || 'S')}" onchange="updateSettingField('logo', this.value)">
+          </div>
+          <div class="field">
+            <label>Logo image (optional)</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              ${logoEntry && logoEntry.data ? `<img src="${logoEntry.data}" style="width:38px;height:38px;border-radius:10px;object-fit:cover;">` : ""}
+              <label class="btn btn-soft btn-sm" style="display:inline-flex;">
+                🖼 Upload logo
+                <input type="file" accept="image/*" style="display:none;" onchange="uploadLogoImage(this.files[0])">
+              </label>
+              ${s.logoAt ? `<button class="btn btn-outline btn-sm" onclick="removeLogoImage()">Remove</button>` : ""}
+            </div>
+          </div>
         </div>
         <div class="field">
-          <label>Home Greeting</label>
+          <label>Home greeting</label>
           <input value="${esc(s.greeting)}" onchange="updateSettingField('greeting', this.value)">
         </div>
       </div>
-    ` : `
-      <div class="card" style="background:var(--gold-soft);border-color:#e6c97a;">
-        <div style="font-size:12.5px;color:#6e4e08;">
-          🔒 <b>Note for ${esc(currentAccount.displayName)}:</b> Shop-wide pricing, cloud backend, and backup controls are managed by the <b>Admin</b> account.
+    </details>
+
+    <!-- 2. Money & Defaults -->
+    <details class="set-block">
+      <summary>💱 Money & Defaults</summary>
+      <div class="set-body">
+        <div class="field-row">
+          <div class="field">
+            <label>Currency</label>
+            <select onchange="updateSettingField('currency', this.value)">
+              ${CURRENCY_OPTIONS.map(([code, label]) => `<option value="${code}" ${(s.currency || 'INR') === code ? 'selected' : ''}>${esc(label)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Date style</label>
+            <select onchange="updateSettingField('dateFmt', this.value)">
+              <option value="short" ${(s.dateFmt || 'short') === 'short' ? 'selected' : ''}>10 Oct 2026</option>
+              <option value="slash" ${s.dateFmt === 'slash' ? 'selected' : ''}>10/10/2026</option>
+              <option value="iso" ${s.dateFmt === 'iso' ? 'selected' : ''}>2026-10-10</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Default low-stock alert</label>
+            <input type="number" min="0" value="${Number(s.defaultLow ?? 2)}" onchange="updateSettingField('defaultLow', Math.max(0, Number(this.value) || 0))">
+          </div>
+          <div class="field">
+            <label>Default payment</label>
+            <select onchange="updateSettingField('defaultPayment', this.value)">
+              <option value="paid" ${(s.defaultPayment || 'paid') === 'paid' ? 'selected' : ''}>Paid</option>
+              <option value="pending" ${s.defaultPayment === 'pending' ? 'selected' : ''}>Pending</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Default order status</label>
+            <select onchange="updateSettingField('defaultStatus', this.value)">
+              <option value="ordered" ${(s.defaultStatus || 'ordered') === 'ordered' ? 'selected' : ''}>🛒 Ordered</option>
+              <option value="packed" ${s.defaultStatus === 'packed' ? 'selected' : ''}>📦 Packed</option>
+              <option value="shipped" ${s.defaultStatus === 'shipped' ? 'selected' : ''}>🚚 Shipped</option>
+              <option value="delivered" ${s.defaultStatus === 'delivered' ? 'selected' : ''}>✅ Delivered</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Default sales channel</label>
+            <select onchange="updateSettingField('defaultChannel', this.value)">
+              <option value="" ${!s.defaultChannel ? 'selected' : ''}>Always first in list</option>
+              ${channels.map((ch) => `<option value="${esc(ch)}" ${s.defaultChannel === ch ? 'selected' : ''}>${esc(ch)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Overdue after (days)</label>
+            <input type="number" min="1" value="${Number(s.dueDays || 7)}" onchange="updateSettingField('dueDays', Math.max(1, Number(this.value) || 7))">
+          </div>
+          <div class="field">
+            <label>WhatsApp country code</label>
+            <input placeholder="e.g. 91 or 971" value="${esc(s.waCountry || '')}" onchange="updateSettingField('waCountry', this.value)">
+          </div>
+        </div>
+        <div class="field">
+          <label>Payment reminder message ({name}, {amount}, {item}, {shop})</label>
+          <textarea rows="2" onchange="updateSettingField('msgRemind', this.value)">${esc(s.msgRemind || DEFAULT_SETTINGS.msgRemind)}</textarea>
+        </div>
+        <div class="field">
+          <label>Shipped message ({name}, {item}, {courier}, {tracking}, {shop})</label>
+          <textarea rows="2" onchange="updateSettingField('msgShipped', this.value)">${esc(s.msgShipped || DEFAULT_SETTINGS.msgShipped)}</textarea>
         </div>
       </div>
-    `}
+    </details>
+
+    <!-- 3. Your Lists -->
+    <details class="set-block">
+      <summary>📝 Your Lists</summary>
+      <div class="set-body">
+        <div style="font-size:12px;color:var(--muted);">Add or remove items from the dropdowns used across the app.</div>
+        ${renderChipEditorHtml("payMethods", "Payment methods", "e.g. Cheque")}
+        ${renderChipEditorHtml("categories", "Stock categories", "e.g. Lehenga")}
+        ${renderChipEditorHtml("channels", "Sales channels", "e.g. Facebook")}
+        ${renderChipEditorHtml("expCats", "Expense categories", "e.g. Rent")}
+      </div>
+    </details>
+
+    <!-- 4. Home & privacy -->
+    <details class="set-block">
+      <summary>🔒 Home & privacy</summary>
+      <div class="set-body">
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Hide amounts (Privacy mode)</div>
+            <div style="font-size:11.5px;color:var(--muted);">Masks money on Home, Stock, Sales, Expenses and Reports</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.privacy ? 'checked' : ''} onchange="updateSettingField('privacy', this.checked)">
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Confirm before deleting</div>
+            <div style="font-size:11.5px;color:var(--muted);">Ask "Are you sure?" before removing items</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.confirmDelete !== false ? 'checked' : ''} onchange="updateSettingField('confirmDelete', this.checked)">
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Profit card on Home</div>
+            <div style="font-size:11.5px;color:var(--muted);">Big net-profit & greeting banner</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.showHero !== false ? 'checked' : ''} onchange="updateSettingField('showHero', this.checked)">
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Summary tiles on Home</div>
+            <div style="font-size:11.5px;color:var(--muted);">Today, stock, sales and expenses</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.showStats !== false ? 'checked' : ''} onchange="updateSettingField('showStats', this.checked)">
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Quick actions on Home</div>
+            <div style="font-size:11.5px;color:var(--muted);">Shortcut buttons</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.showQuick !== false ? 'checked' : ''} onchange="updateSettingField('showQuick', this.checked)">
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Low-stock reminders on Home</div>
+            <div style="font-size:11.5px;color:var(--muted);">List of items running out</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.showLow !== false ? 'checked' : ''} onchange="updateSettingField('showLow', this.checked)">
+        </div>
+        <div class="field" style="margin-top:4px;">
+          <label>Low-stock reminders shown</label>
+          <select onchange="updateSettingField('lowCount', Number(this.value) || 3)">
+            <option value="1" ${Number(s.lowCount) === 1 ? 'selected' : ''}>1 item</option>
+            <option value="3" ${(Number(s.lowCount) || 3) === 3 ? 'selected' : ''}>3 items</option>
+            <option value="5" ${Number(s.lowCount) === 5 ? 'selected' : ''}>5 items</option>
+            <option value="10" ${Number(s.lowCount) === 10 ? 'selected' : ''}>10 items</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Tip on Home</div>
+            <div style="font-size:11.5px;color:var(--muted);">Privacy & backup notice at the bottom</div>
+          </div>
+          <input type="checkbox" style="width:20px;height:20px;" ${s.showNotice !== false ? 'checked' : ''} onchange="updateSettingField('showNotice', this.checked)">
+        </div>
+      </div>
+    </details>
+
+    <!-- 5. Backup & Restore -->
+    <details class="set-block">
+      <summary>💾 Backup & Restore</summary>
+      <div class="set-body">
+        <div style="font-size:12.5px;color:var(--muted);">
+          Export a copy of all products, sales, expenses, photos and settings, or restore a previous SISORA backup.
+        </div>
+        <button class="btn btn-primary" onclick="exportFullBackupJson()">⬇ Export full backup (JSON)</button>
+        <label class="btn btn-soft" style="justify-content:center;">
+          ⬆ Restore backup from JSON file
+          <input type="file" accept=".json,application/json" style="display:none;" onchange="restoreBackupFromJson(this.files[0])">
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="exportCsv('sales')">Export sales CSV</button>
+          <button class="btn btn-outline btn-sm" onclick="exportCsv('stock')">Export stock CSV</button>
+          <button class="btn btn-outline btn-sm" onclick="exportCsv('expenses')">Export expenses CSV</button>
+          <button class="btn btn-outline btn-sm" onclick="exportCsv('customers')">Export customers CSV</button>
+        </div>
+        <button class="btn btn-soft btn-sm" onclick="resetAllSettingsKeepRecords()">Reset all settings (keeps your records)</button>
+      </div>
+    </details>
+
+    <!-- Sisters Profiles (Vaheeda & Balkees) -->
+    <details class="set-block">
+      <summary>👭 Sisters Profiles (Vaheeda & Balkees)</summary>
+      <div class="set-body">
+        <div style="font-size:12.5px;color:var(--muted);">
+          The boutique co-founders are permanently fixed as <b>Vaheeda</b> & <b>Balkees</b>. Upload or update their profile pictures below.
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          ${["vaheeda", "balkees"].map((sid) => {
+            const canEdit = isAdmin || (currentAccount && currentAccount.id === sid);
+            return `
+              <div class="kpi-box" style="text-align:center;">
+                <div style="margin-bottom:6px;display:flex;justify-content:center;">${getAccountAvatarHtml(sid, "lg")}</div>
+                <div style="font-weight:800;text-transform:capitalize;">${sid}</div>
+                ${canEdit ? `
+                  <label class="btn btn-soft btn-sm" style="margin-top:6px;">
+                    📸 Photo
+                    <input type="file" accept="image/*" style="display:none;" onchange="uploadProfilePhoto('${sid}', this.files[0])">
+                  </label>
+                ` : ""}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </details>
   `;
 }
 
@@ -1600,13 +1950,182 @@ window.updateSettingField = function(key, val) {
   showToast("Setting saved ✨");
 };
 
+window.addSettingListItem = function(key) {
+  const input = document.getElementById("chipInput_" + key);
+  const val = (input?.value || "").trim();
+  if (!val) return;
+  const list = Array.isArray(db.settings[key]) ? [...db.settings[key]] : [...(DEFAULT_SETTINGS[key] || [])];
+  if (!list.includes(val)) {
+    list.push(val);
+    updateSettingField(key, list);
+  }
+};
+
+window.removeSettingListItem = function(key, idx) {
+  const list = Array.isArray(db.settings[key]) ? [...db.settings[key]] : [...(DEFAULT_SETTINGS[key] || [])];
+  if (list.length <= 1) return showToast("Keep at least one item");
+  list.splice(idx, 1);
+  updateSettingField(key, list);
+};
+
+window.uploadLogoImage = async function(file) {
+  if (!file) return;
+  showToast("Uploading logo…");
+  const dataUrl = await compressImageFile(file, 256, 0.85);
+  const now = Date.now();
+  await putLocalImage("logo", dataUrl, now, false);
+  db.settings.logoAt = now;
+  db.settings._u = now;
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  renderApp();
+  showToast("Logo updated 🌷");
+};
+
+window.removeLogoImage = async function() {
+  await deleteLocalImage("logo");
+  db.settings.logoAt = 0;
+  db.settings._u = Date.now();
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  renderApp();
+  showToast("Logo removed");
+};
+
+window.resetLookToDefault = function() {
+  Object.assign(db.settings, {
+    theme: "light",
+    accent: "#c85f83",
+    font: "system",
+    textSize: 100,
+    radius: "classic",
+    compact: false,
+    _u: Date.now()
+  });
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  renderApp();
+  showToast("Look reset 🌷");
+};
+
+window.resetAllSettingsKeepRecords = function() {
+  if (!confirm("Reset all settings to default while keeping your products, sales, and expenses?")) return;
+  const pins = db.settings.pins || DEFAULT_SETTINGS.pins;
+  const profilePhotosAt = db.settings.profilePhotosAt || {};
+  db.settings = {
+    ...DEFAULT_SETTINGS,
+    pins,
+    profilePhotosAt,
+    sisters: FIXED_SISTERS,
+    _u: Date.now()
+  };
+  saveLocalDb();
+  outbox.add("settings");
+  saveOutbox();
+  pushOutboxToFirebase();
+  renderApp();
+  showToast("Settings reset ✨");
+};
+
+function triggerDownload(filename, content, mime = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+window.exportFullBackupJson = function() {
+  const imagesObj = {};
+  imgMap.forEach((v, k) => { if (v && v.data) imagesObj[k] = v; });
+  const payload = {
+    app: "SISORA",
+    exportedAt: nowIso(),
+    db,
+    images: imagesObj
+  };
+  triggerDownload(`SISORA-backup-${todayIso()}.json`, JSON.stringify(payload, null, 2), "application/json");
+  showToast("Backup exported 💾");
+};
+
+window.restoreBackupFromJson = function(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+      const src = parsed.db || parsed;
+      if (!src || typeof src !== "object") throw new Error("Invalid backup file");
+      if (Array.isArray(src.products)) db.products = src.products;
+      if (Array.isArray(src.sales)) db.sales = src.sales;
+      if (Array.isArray(src.expenses)) db.expenses = src.expenses;
+      if (Array.isArray(src.customers)) db.customers = src.customers;
+      if (Array.isArray(src.settlements)) db.settlements = src.settlements;
+      if (src.settings) {
+        db.settings = { ...DEFAULT_SETTINGS, ...src.settings, sisters: FIXED_SISTERS };
+      }
+      if (parsed.images && typeof parsed.images === "object") {
+        for (const [k, v] of Object.entries(parsed.images)) {
+          const dataUrl = typeof v === "string" ? v : v?.data;
+          const at = (typeof v === "object" && v?.at) ? v.at : Date.now();
+          if (dataUrl) await putLocalImage(k, dataUrl, at, false);
+        }
+      }
+      saveLocalDb();
+      renderApp();
+      showToast("Backup restored ✨");
+    } catch (e) {
+      showToast("Could not restore backup");
+    }
+  };
+  reader.readAsText(file);
+};
+
+window.exportCsv = function(kind) {
+  const csvEsc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  let rows = [];
+  if (kind === "sales") {
+    rows.push(["Date", "Product", "Qty", "Unit Price", "Discount", "Total", "Paid", "Customer", "Phone", "Channel", "Status", "Sold By"]);
+    db.sales.forEach((s) => {
+      const total = (Number(s.qty) || 1) * (Number(s.unitPrice) || 0) - (Number(s.discount) || 0);
+      rows.push([s.date, s.productName, s.qty, s.unitPrice, s.discount || 0, total, s.paidAmount || 0, s.customer, s.phone, s.channel, s.status, s.soldBy]);
+    });
+  } else if (kind === "stock") {
+    rows.push(["Code", "Name", "Category", "Sizes", "Colours", "Cost", "Selling Price", "Qty", "Low Alert"]);
+    db.products.forEach((p) => {
+      rows.push([p.code, p.name, p.category, p.variant, p.color, p.cost, p.price, p.qty, p.low]);
+    });
+  } else if (kind === "expenses") {
+    rows.push(["Date", "Title", "Category", "Type", "Amount", "Paid By", "Notes"]);
+    db.expenses.forEach((e) => {
+      rows.push([e.date, e.title, e.category, e.type || "expense", e.amount, e.paidBy, e.notes]);
+    });
+  } else if (kind === "customers") {
+    rows.push(["Name", "Phone", "City", "Notes"]);
+    db.customers.forEach((c) => {
+      rows.push([c.name, c.phone, c.city, c.notes]);
+    });
+  }
+  const csv = rows.map((r) => r.map(csvEsc).join(",")).join("\n");
+  triggerDownload(`SISORA-${kind}-${todayIso()}.csv`, csv, "text/csv;charset=utf-8");
+  showToast(`Exported ${kind} CSV 📄`);
+};
+
 window.changeMyOwnPin = function() {
   const cur = (document.getElementById("curPinInput")?.value || "").trim();
   const nw = (document.getElementById("newPinInput")?.value || "").trim();
   const myId = currentAccount.id;
   const expected = String((db.settings.pins && db.settings.pins[myId]) || currentAccount.defaultPin);
   if (cur !== expected) return showToast("Current PIN is incorrect");
-  if (!/^\d{4,6}$/.test(nw)) return showToast("New PIN must be 4 to 6 digits");
+  if (!/^\d{4,8}$/.test(nw)) return showToast("New PIN must be 4+ digits");
   db.settings.pins = { ...(db.settings.pins || DEFAULT_SETTINGS.pins), [myId]: nw };
   db.settings._u = Date.now();
   saveLocalDb();
