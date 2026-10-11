@@ -739,6 +739,15 @@ async function pullFromFirebase() {
         const localIm = imgMap.get(pid);
         if (!localIm || (pu.invoiceAt && localIm.at < pu.invoiceAt)) neededImgs.add(pid);
       }
+      const pIds = Array.isArray(pu.photoIds) ? pu.photoIds : [];
+      for (const pid of pIds) {
+        if (!imgMap.get(pid)) neededImgs.add(pid);
+      }
+    }
+    for (const s of (db.sales || [])) {
+      if (s.paymentScreenshotId && !imgMap.get(s.paymentScreenshotId)) {
+        neededImgs.add(s.paymentScreenshotId);
+      }
     }
     const profAt = db.settings.profilePhotosAt || {};
     for (const acc of FIXED_ACCOUNTS) {
@@ -829,26 +838,149 @@ function updateSyncPill() {
 // Supports clickable multi-photo lightbox, single & multiple item selection,
 // size/colour/quantity pickers, and direct customer ordering into Firebase!
 // ============================================================================
+const OFFICIAL_UPI_IDS = [
+  { id: "vaheedaperool@okicici", sister: "vaheeda", label: "Vaheeda UPI (vaheedaperool@okicici)" },
+  { id: "balkeesismail95@okhdfcbank", sister: "balkees", label: "Balkees UPI (balkeesismail95@okhdfcbank)" }
+];
+const SISTER_WHATSAPP_HELP = {
+  vaheeda: { name: "Vaheeda", display: "+91 89434 02515", digits: "918943402515" },
+  balkees: { name: "Balkees", display: "+91 90485 08305", digits: "919048508305" }
+};
+const SISORA_INSTAGRAM_URL = "https://www.instagram.com/sisora.business?rpxt=aTE4Ym4zM2NjcHI3";
+
+// ---- Colour × Size Variant Stock & Colour-Specific Photo Helpers ----
+function parseSizesList(p) {
+  const list = String((p && p.variant) || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+  return list.length ? list : ["Free Size"];
+}
+function parseColorsList(p) {
+  const list = String((p && p.color) || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+  return list.length ? list : ["As Shown"];
+}
+function makeVariantKey(color, size) {
+  return `${String(color || "").trim()}|${String(size || "").trim()}`;
+}
+function hasVariantStockMatrix(p) {
+  return Boolean(p && p.variantStock && typeof p.variantStock === "object" && Object.keys(p.variantStock).length > 0);
+}
+function getVariantQty(p, color, size) {
+  if (!p) return 0;
+  if (!hasVariantStockMatrix(p)) return Math.max(0, Number(p.qty) || 0);
+  const exactKey = makeVariantKey(color, size);
+  if (p.variantStock[exactKey] !== undefined) return Math.max(0, Number(p.variantStock[exactKey]) || 0);
+  const lowerKey = exactKey.toLowerCase();
+  for (const [k, v] of Object.entries(p.variantStock)) {
+    if (String(k).toLowerCase() === lowerKey) return Math.max(0, Number(v) || 0);
+  }
+  return 0;
+}
+function getColorTotalQty(p, color) {
+  if (!p) return 0;
+  if (!hasVariantStockMatrix(p)) return Math.max(0, Number(p.qty) || 0);
+  const sizes = parseSizesList(p);
+  return sizes.reduce((sum, sz) => sum + getVariantQty(p, color, sz), 0);
+}
+function getSizeTotalQty(p, size) {
+  if (!p) return 0;
+  if (!hasVariantStockMatrix(p)) return Math.max(0, Number(p.qty) || 0);
+  const colors = parseColorsList(p);
+  return colors.reduce((sum, cl) => sum + getVariantQty(p, cl, size), 0);
+}
+function isColorAvailable(p, color) {
+  return getColorTotalQty(p, color) > 0;
+}
+function isSizeAvailableForColor(p, color, size) {
+  return getVariantQty(p, color, size) > 0;
+}
+function getFirstAvailableColorAndSize(p) {
+  const colors = parseColorsList(p);
+  const sizes = parseSizesList(p);
+  for (const c of colors) {
+    if (isColorAvailable(p, c)) {
+      for (const s of sizes) {
+        if (isSizeAvailableForColor(p, c, s)) return { color: c, size: s };
+      }
+      return { color: c, size: sizes[0] || "Free Size" };
+    }
+  }
+  return { color: colors[0] || "As Shown", size: sizes[0] || "Free Size" };
+}
+
+function getOrderedPhotosForProductColor(p, selectedColor, idToUrlObj) {
+  const ids = Array.isArray(p?.photoIds) && p.photoIds.length ? p.photoIds : (p?.imgAt ? [p.id] : []);
+  const colorMap = (p && p.photoColorMap && typeof p.photoColorMap === "object") ? p.photoColorMap : {};
+  const targetColor = String(selectedColor || "").trim().toLowerCase();
+  const matchedUrls = [];
+  const otherUrls = [];
+  for (const id of ids) {
+    const url = idToUrlObj ? idToUrlObj[id] : (imgMap.get(id)?.data || "");
+    if (!url) continue;
+    const tag = String(colorMap[id] || "").trim().toLowerCase();
+    if (targetColor && tag && tag === targetColor) {
+      matchedUrls.push(url);
+    } else {
+      otherUrls.push(url);
+    }
+  }
+  return matchedUrls.length > 0 ? [...matchedUrls, ...otherUrls] : otherUrls;
+}
+
 let catProducts = [];
 let catPhotosMap = {}; // prodId -> [dataUrl, ...]
+let catPhotosByIdMap = {}; // prodId -> { imgId: dataUrl }
 let catShopSettings = { ...DEFAULT_SETTINGS };
 let catSearch = "";
 let catCategory = "All";
 // Selected items map: prodId -> { selected: boolean, qty: number, size: string, color: string }
 let catSelections = {};
+let _custCheckoutScreenshotDataUrl = "";
+let _custCheckoutUpiId = OFFICIAL_UPI_IDS[0].id;
 
 function getCatItemState(p) {
   if (!catSelections[p.id]) {
-    const sizes = String(p.variant || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
-    const colors = String(p.color || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+    const firstAvail = getFirstAvailableColorAndSize(p);
     catSelections[p.id] = {
       selected: false,
       qty: 1,
-      size: sizes[0] || "Free Size",
-      color: colors[0] || "As Shown"
+      size: firstAvail.size,
+      color: firstAvail.color
     };
+  } else {
+    const st = catSelections[p.id];
+    if (!isColorAvailable(p, st.color)) {
+      const firstAvail = getFirstAvailableColorAndSize(p);
+      st.color = firstAvail.color;
+      st.size = firstAvail.size;
+    } else if (!isSizeAvailableForColor(p, st.color, st.size)) {
+      const sizes = parseSizesList(p);
+      const availSz = sizes.find((sz) => isSizeAvailableForColor(p, st.color, sz));
+      if (availSz) st.size = availSz;
+    }
+    const maxVarQty = Math.max(1, getVariantQty(p, st.color, st.size));
+    if (st.qty > maxVarQty) st.qty = maxVarQty;
   }
   return catSelections[p.id];
+}
+
+function renderCatalogueHelpBannerHtml() {
+  const vHelpMsg = encodeURIComponent(`Hi Vaheeda! 🌷 I need help choosing/ordering an outfit from the SISORA Live Catalogue.`);
+  const bHelpMsg = encodeURIComponent(`Hi Balkees! 🌸 I need help choosing/ordering an outfit from the SISORA Live Catalogue.`);
+  return `
+    <div class="card" style="padding:12px 14px;background:linear-gradient(135deg, var(--card), var(--accent-soft));border-color:rgba(200,95,131,0.4);">
+      <div style="font-size:12.5px;font-weight:800;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
+        <span>💬 Need Any Help? Contact Sisters Directly on WhatsApp:</span>
+        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:11.5px;font-weight:800;">📸 @sisora.business →</a>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:8px 10px;">
+          🌷 Vaheeda (${SISTER_WHATSAPP_HELP.vaheeda.display})
+        </a>
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:8px 10px;">
+          🌸 Balkees (${SISTER_WHATSAPP_HELP.balkees.display})
+        </a>
+      </div>
+    </div>
+  `;
 }
 
 async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
@@ -914,12 +1046,17 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
       catProducts.map(async (p) => {
         const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
         const urls = [];
+        const byId = {};
         for (const imgId of ids) {
           const im = await fbGet(`shops/${shopId}/data/images/${imgId}`);
-          if (im && im.data) urls.push(im.data);
+          if (im && im.data) {
+            urls.push(im.data);
+            byId[imgId] = im.data;
+          }
         }
         if (urls.length) {
           catPhotosMap[p.id] = urls;
+          catPhotosByIdMap[p.id] = byId;
           renderLiveCatalogueDom();
         }
       })
@@ -967,9 +1104,11 @@ function renderLiveCatalogueDom() {
         <div class="card hero-card" style="padding:14px 16px;">
           <h2 style="margin:0;font-size:18px;">✨ Browse Live Stock & Place Your Order</h2>
           <p style="margin:4px 0 0;font-size:12.5px;">
-            📸 Tap any outfit photo to view all angles · ☑️ Select <b>single</b> or <b>multiple</b> outfits · 🛍️ Tap <b>Make Order</b> below!
+            🎨 Tap a <b>Colour</b> to automatically preview that colour's photos · 📏 Select available <b>Size</b> · 🛍️ Tap <b>Make Order</b>!
           </p>
         </div>
+
+        ${renderCatalogueHelpBannerHtml()}
 
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="search" placeholder="🔍 Search outfit, colour, size, category…" value="${esc(catSearch)}" oninput="window.setCatSearch(this.value)">
@@ -987,22 +1126,28 @@ function renderLiveCatalogueDom() {
             <p style="color:var(--muted);margin:0;">Try clearing your search or choosing another category.</p>
           </div>
         ` : filtered.map((p) => {
-          const photos = catPhotosMap[p.id] || [];
-          const coverUrl = photos[0] || "";
           const st = getCatItemState(p);
-          const sizes = String(p.variant || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
-          const colors = String(p.color || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
-          const maxQty = Math.max(1, Number(p.qty) || 1);
+          const byId = catPhotosByIdMap[p.id] || {};
+          const photos = Object.keys(byId).length
+            ? getOrderedPhotosForProductColor(p, st.color, byId)
+            : (catPhotosMap[p.id] || []);
+          const coverUrl = photos[0] || "";
+          const sizes = parseSizesList(p);
+          const colors = parseColorsList(p);
+          const selectedComboQty = Math.max(0, getVariantQty(p, st.color, st.size));
+          const maxQty = Math.max(1, selectedComboQty || Number(p.qty) || 1);
+          const colorMap = (p.photoColorMap && typeof p.photoColorMap === "object") ? p.photoColorMap : {};
+          const hasColorPhoto = Object.values(colorMap).some((c) => String(c || "").trim().toLowerCase() === String(st.color || "").trim().toLowerCase());
 
           return `
             <div class="prod-tile" style="${st.selected ? 'border:2.5px solid var(--accent);box-shadow:0 10px 28px rgba(200,95,131,0.22);' : ''}">
               ${coverUrl ? `<div class="prod-blur-bg" style="background-image:url('${coverUrl}')"></div>` : ""}
               <div class="prod-scrim" style="padding:14px;">
                 <div style="display:flex;gap:12px;align-items:flex-start;">
-                  <!-- Clickable Photo Thumbnail -->
+                  <!-- Clickable Photo Thumbnail (auto-switches when Colour is selected) -->
                   <div class="prod-thumb" style="width:96px;height:116px;border-radius:14px;cursor:pointer;" onclick="window.openCatProductGallery('${p.id}', 0)">
                     ${coverUrl ? `<img src="${coverUrl}" alt="${esc(p.name)}">` : "👗"}
-                    <span class="photo-count-badge">🔍 ${photos.length > 1 ? `${photos.length} photos` : "Zoom"}</span>
+                    <span class="photo-count-badge">🔍 ${hasColorPhoto ? esc(st.color) : (photos.length > 1 ? `${photos.length} photos` : "Zoom")}</span>
                   </div>
 
                   <div class="prod-info">
@@ -1014,7 +1159,7 @@ function renderLiveCatalogueDom() {
                       ${p.code ? `Code: <b>${esc(p.code)}</b> · ` : ""}${esc(p.category || "Kurti")}
                     </div>
                     <div class="pill-row" style="margin-top:4px;">
-                      <span class="pill green">✅ ${maxQty} available in live stock</span>
+                      <span class="pill green">✅ ${selectedComboQty} available (${esc(st.color)} · ${esc(st.size)})</span>
                       ${st.selected ? `<span class="pill" style="background:var(--accent);color:#fff;">✓ Selected (${st.qty})</span>` : ""}
                     </div>
 
@@ -1022,33 +1167,56 @@ function renderLiveCatalogueDom() {
                       <div style="display:flex;gap:6px;overflow-x:auto;margin-top:8px;">
                         ${photos.map((u, idx) => `
                           <img src="${u}" onclick="window.openCatProductGallery('${p.id}', ${idx})"
-                               style="width:42px;height:50px;border-radius:8px;object-fit:cover;border:1.5px solid var(--accent);cursor:pointer;flex-shrink:0;">
+                               style="width:42px;height:50px;border-radius:8px;object-fit:cover;border:${idx === 0 ? '2px solid var(--accent)' : '1px solid var(--line)'};cursor:pointer;flex-shrink:0;">
                         `).join("")}
                       </div>
                     ` : ""}
                   </div>
                 </div>
 
-                <!-- Size, Colour & Quantity Pickers -->
-                <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <!-- Interactive Colour & Size Chips (Unavailable options are grayed out & unselectable) -->
+                <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:8px;">
                   <div>
-                    <label style="font-size:11px;font-weight:800;color:var(--muted);display:block;margin-bottom:3px;">📏 CHOOSE SIZE</label>
-                    <select style="padding:6px 8px;font-size:12.5px;" onchange="window.updateCatItemOption('${p.id}', 'size', this.value)">
-                      ${sizes.map((sz) => `<option value="${esc(sz)}" ${st.size === sz ? 'selected' : ''}>${esc(sz)}</option>`).join("")}
-                    </select>
+                    <label style="font-size:11px;font-weight:800;color:var(--muted);display:block;margin-bottom:4px;">🎨 SELECT COLOUR (Auto-switches outfit photo)</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                      ${colors.map((cl) => {
+                        const clQty = getColorTotalQty(p, cl);
+                        const avail = clQty > 0;
+                        const isSel = st.color === cl && avail;
+                        return `
+                          <button type="button"
+                            ${!avail ? "disabled" : `onclick="window.updateCatItemOption('${p.id}', 'color', '${esc(cl)}')"`}
+                            style="padding:6px 11px;border-radius:99px;font-size:12px;font-weight:800;border:1.5px solid ${isSel ? 'var(--accent)' : 'var(--line)'};background:${isSel ? 'var(--accent)' : (avail ? 'var(--card)' : 'var(--line)')};color:${isSel ? '#fff' : (avail ? 'var(--ink)' : 'var(--muted)')};opacity:${avail ? '1' : '0.42'};text-decoration:${avail ? 'none' : 'line-through'};cursor:${avail ? 'pointer' : 'not-allowed'};">
+                            🎨 ${esc(cl)} ${avail ? (hasVariantStockMatrix(p) ? `(${clQty})` : "") : "(Sold Out)"}
+                          </button>
+                        `;
+                      }).join("")}
+                    </div>
                   </div>
+
                   <div>
-                    <label style="font-size:11px;font-weight:800;color:var(--muted);display:block;margin-bottom:3px;">🎨 CHOOSE COLOUR</label>
-                    <select style="padding:6px 8px;font-size:12.5px;" onchange="window.updateCatItemOption('${p.id}', 'color', this.value)">
-                      ${colors.map((cl) => `<option value="${esc(cl)}" ${st.color === cl ? 'selected' : ''}>${esc(cl)}</option>`).join("")}
-                    </select>
+                    <label style="font-size:11px;font-weight:800;color:var(--muted);display:block;margin-bottom:4px;">📏 SELECT SIZE (For ${esc(st.color)})</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                      ${sizes.map((sz) => {
+                        const szQty = getVariantQty(p, st.color, sz);
+                        const avail = szQty > 0;
+                        const isSel = st.size === sz && avail;
+                        return `
+                          <button type="button"
+                            ${!avail ? "disabled" : `onclick="window.updateCatItemOption('${p.id}', 'size', '${esc(sz)}')"`}
+                            style="padding:6px 11px;border-radius:99px;font-size:12px;font-weight:800;border:1.5px solid ${isSel ? 'var(--accent)' : 'var(--line)'};background:${isSel ? 'var(--accent)' : (avail ? 'var(--card)' : 'var(--line)')};color:${isSel ? '#fff' : (avail ? 'var(--ink)' : 'var(--muted)')};opacity:${avail ? '1' : '0.42'};text-decoration:${avail ? 'none' : 'line-through'};cursor:${avail ? 'pointer' : 'not-allowed'};">
+                            📏 ${esc(sz)} ${avail ? (hasVariantStockMatrix(p) ? `(${szQty})` : "") : "(Out of Stock)"}
+                          </button>
+                        `;
+                      }).join("")}
+                    </div>
                   </div>
                 </div>
 
                 <!-- Quantity + Select Single / Multiple Actions -->
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;flex-wrap:wrap;">
                   <div style="display:flex;align-items:center;gap:6px;">
-                    <span style="font-size:11.5px;font-weight:700;color:var(--muted);">Qty:</span>
+                    <span style="font-size:11.5px;font-weight:700;color:var(--muted);">Order Qty:</span>
                     <button class="btn btn-outline btn-sm" onclick="window.changeCatItemQty('${p.id}', -1)">−</button>
                     <span style="font-weight:800;min-width:20px;text-align:center;">${st.qty}</span>
                     <button class="btn btn-outline btn-sm" onclick="window.changeCatItemQty('${p.id}', 1)">+</button>
@@ -1096,7 +1264,12 @@ window.clearCatSelection = () => {
   renderLiveCatalogueDom();
 };
 window.openCatProductGallery = (prodId, startIdx = 0) => {
-  const urls = catPhotosMap[prodId] || [];
+  const p = catProducts.find((x) => x.id === prodId);
+  const st = p ? getCatItemState(p) : null;
+  const byId = catPhotosByIdMap[prodId] || {};
+  const urls = (p && Object.keys(byId).length)
+    ? getOrderedPhotosForProductColor(p, st?.color, byId)
+    : (catPhotosMap[prodId] || []);
   if (!urls.length) return showToast("Photo loading…");
   openLightbox(urls, startIdx);
 };
@@ -1104,13 +1277,26 @@ window.updateCatItemOption = (prodId, field, value) => {
   const p = catProducts.find((x) => x.id === prodId);
   if (!p) return;
   const st = getCatItemState(p);
-  st[field] = value;
+  if (field === "color") {
+    if (!isColorAvailable(p, value)) return showToast("This colour is currently out of stock");
+    st.color = value;
+    if (!isSizeAvailableForColor(p, value, st.size)) {
+      const availSz = parseSizesList(p).find((sz) => isSizeAvailableForColor(p, value, sz));
+      if (availSz) st.size = availSz;
+    }
+  } else if (field === "size") {
+    if (!isSizeAvailableForColor(p, st.color, value)) return showToast("This size is out of stock for " + st.color);
+    st.size = value;
+  }
+  const maxVarQty = Math.max(1, getVariantQty(p, st.color, st.size));
+  st.qty = Math.min(st.qty || 1, maxVarQty);
+  renderLiveCatalogueDom();
 };
 window.changeCatItemQty = (prodId, delta) => {
   const p = catProducts.find((x) => x.id === prodId);
   if (!p) return;
   const st = getCatItemState(p);
-  const maxQty = Math.max(1, Number(p.qty) || 1);
+  const maxQty = Math.max(1, getVariantQty(p, st.color, st.size));
   st.qty = Math.max(1, Math.min(maxQty, (st.qty || 1) + delta));
   st.selected = true;
   renderLiveCatalogueDom();
@@ -1131,6 +1317,37 @@ window.orderSingleCatItemNow = (prodId) => {
   window.openCustomerCheckoutModal();
 };
 
+window.handleCustScreenshotUpload = async (file) => {
+  if (!file) return;
+  _custCheckoutScreenshotDataUrl = await compressImageFile(file, 960, 0.84);
+  const prevBox = document.getElementById("custScreenshotPreviewBox");
+  if (prevBox) {
+    prevBox.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;padding:8px;background:var(--green-soft);border-radius:10px;">
+        <img src="${_custCheckoutScreenshotDataUrl}" style="width:48px;height:58px;object-fit:cover;border-radius:8px;border:1.5px solid var(--green);">
+        <div style="flex:1;font-size:12px;color:var(--green);font-weight:800;">✅ Payment Screenshot Attached!</div>
+        <button type="button" class="btn btn-outline btn-sm" onclick="window._custRemoveScreenshot()">✕</button>
+      </div>
+    `;
+  }
+};
+window._custRemoveScreenshot = () => {
+  _custCheckoutScreenshotDataUrl = "";
+  const prevBox = document.getElementById("custScreenshotPreviewBox");
+  if (prevBox) prevBox.innerHTML = "";
+};
+
+window.selectCheckoutUpiId = (upiId) => {
+  _custCheckoutUpiId = upiId;
+  OFFICIAL_UPI_IDS.forEach((u) => {
+    const el = document.getElementById("upiCard_" + u.sister);
+    if (el) {
+      el.style.borderColor = u.id === upiId ? "var(--accent)" : "var(--line)";
+      el.style.background = u.id === upiId ? "var(--accent-soft)" : "var(--card)";
+    }
+  });
+};
+
 window.openCustomerCheckoutModal = () => {
   const selectedItems = catProducts.filter((p) => getCatItemState(p).selected);
   if (selectedItems.length === 0) {
@@ -1143,8 +1360,12 @@ window.openCustomerCheckoutModal = () => {
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>🛍️ Complete Your Order (${selectedItems.length} ${selectedItems.length === 1 ? "Outfit" : "Outfits"})</h3>
+          <h3>🛍️ Complete Your UPI Order (${selectedItems.length} ${selectedItems.length === 1 ? "Outfit" : "Outfits"})</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+
+        <div class="card" style="background:var(--amber-soft);border-color:#e5b968;margin-bottom:10px;padding:10px 12px;font-size:12px;color:#7a4e05;">
+          ⚠️ <b>Order Confirmed Only After Payment Received:</b> Catalogue orders accept <b>UPI payment only</b>. Please pay to one of the official UPI IDs below and attach your payment confirmation screenshot.
         </div>
 
         <div class="card" style="background:var(--bg);margin-bottom:12px;">
@@ -1156,15 +1377,58 @@ window.openCustomerCheckoutModal = () => {
               <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px;">
                 <div>
                   <b>${esc(p.name)}</b> × ${st.qty}
-                  <div style="font-size:11.5px;color:var(--muted);">Size: ${esc(st.size)} · Colour: ${esc(st.color)}</div>
+                  <div style="font-size:11.5px;color:var(--muted);">Colour: <b>${esc(st.color)}</b> · Size: <b>${esc(st.size)}</b></div>
                 </div>
                 <b>${money(sub)}</b>
               </div>
             `;
           }).join("")}
           <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;font-size:15px;font-weight:900;color:var(--accent);">
-            <span>Order Total</span>
+            <span>Total UPI Amount Payable</span>
             <span>${money(totalAmount)}</span>
+          </div>
+        </div>
+
+        <!-- Official UPI Payment Section (Only UPI Allowed) -->
+        <div class="field">
+          <label>💳 Select Which Official UPI ID You Are Paying To *</label>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${OFFICIAL_UPI_IDS.map((u) => {
+              const active = _custCheckoutUpiId === u.id;
+              const upiDeepLink = `upi://pay?pa=${encodeURIComponent(u.id)}&pn=${encodeURIComponent("SISORA Boutique")}&am=${encodeURIComponent(totalAmount)}&cu=INR`;
+              return `
+                <div id="upiCard_${u.sister}" onclick="window.selectCheckoutUpiId('${u.id}')"
+                     style="padding:10px 12px;border-radius:12px;border:2px solid ${active ? 'var(--accent)' : 'var(--line)'};background:${active ? 'var(--accent-soft)' : 'var(--card)'};cursor:pointer;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <div>
+                      <div style="font-weight:800;font-size:13.5px;">${u.sister === 'vaheeda' ? '🌷 Vaheeda UPI' : '🌸 Balkees UPI'}</div>
+                      <div style="font-family:monospace;font-size:13px;font-weight:900;color:var(--accent);">${esc(u.id)}</div>
+                    </div>
+                    <div style="display:flex;gap:5px;">
+                      <button type="button" class="btn btn-outline btn-sm" onclick="event.stopPropagation();navigator.clipboard.writeText('${u.id}');showToast('Copied UPI ID: ${u.id}')">📋 Copy UPI</button>
+                      <a href="${upiDeepLink}" onclick="event.stopPropagation();window.selectCheckoutUpiId('${u.id}')" class="btn btn-primary btn-sm" style="text-decoration:none;">⚡ Pay ${money(totalAmount)}</a>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        </div>
+
+        <!-- Payment Confirmation Screenshot Upload -->
+        <div class="field">
+          <label>📸 Upload UPI Payment Confirmation Screenshot *</label>
+          <label class="btn btn-soft" style="width:100%;justify-content:center;padding:11px;">
+            📤 Tap to Attach Payment Screenshot
+            <input type="file" accept="image/*" style="display:none;" onchange="window.handleCustScreenshotUpload(this.files[0])">
+          </label>
+          <div id="custScreenshotPreviewBox">
+            ${_custCheckoutScreenshotDataUrl ? `
+              <div style="display:flex;align-items:center;gap:10px;margin-top:6px;padding:8px;background:var(--green-soft);border-radius:10px;">
+                <img src="${_custCheckoutScreenshotDataUrl}" style="width:48px;height:58px;object-fit:cover;border-radius:8px;border:1.5px solid var(--green);">
+                <div style="flex:1;font-size:12px;color:var(--green);font-weight:800;">✅ Payment Screenshot Attached!</div>
+              </div>
+            ` : ""}
           </div>
         </div>
 
@@ -1174,7 +1438,7 @@ window.openCustomerCheckoutModal = () => {
             <input id="custOrdName" placeholder="Enter your name">
           </div>
           <div class="field">
-            <label>WhatsApp Number (for Live Order Status) *</label>
+            <label>WhatsApp Number (for Live Status) *</label>
             <input id="custOrdPhone" type="tel" placeholder="e.g. 98765 43210">
           </div>
         </div>
@@ -1184,23 +1448,13 @@ window.openCustomerCheckoutModal = () => {
           <textarea id="custOrdAddress" rows="2" placeholder="House / Flat, Street, City, PIN Code"></textarea>
         </div>
 
-        <div class="field-row">
-          <div class="field">
-            <label>Preferred Payment Method</label>
-            <select id="custOrdPayMethod">
-              <option value="UPI / GPay">UPI / GPay</option>
-              <option value="Bank transfer">Bank Transfer</option>
-              <option value="Cash">Cash on Delivery / Pickup</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Special Notes (optional)</label>
-            <input id="custOrdNotes" placeholder="Custom fit or delivery note">
-          </div>
+        <div class="field">
+          <label>Special Notes / UPI Transaction Ref (optional)</label>
+          <input id="custOrdNotes" placeholder="UTR / Ref No. or delivery note">
         </div>
 
         <button id="placeCustOrderBtn" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;margin-top:6px;" onclick="window.submitCustomerCatalogueOrder()">
-          ✅ Place Order Now (${money(totalAmount)})
+          ✅ Submit Order & Send Payment Confirmation (${money(totalAmount)})
         </button>
       </div>
     </div>
@@ -1211,18 +1465,21 @@ window.submitCustomerCatalogueOrder = async () => {
   const name = (document.getElementById("custOrdName")?.value || "").trim();
   const phone = (document.getElementById("custOrdPhone")?.value || "").trim();
   const address = (document.getElementById("custOrdAddress")?.value || "").trim();
-  const payPref = document.getElementById("custOrdPayMethod")?.value || "UPI / GPay";
   const extraNotes = (document.getElementById("custOrdNotes")?.value || "").trim();
+  const chosenUpiObj = OFFICIAL_UPI_IDS.find((u) => u.id === _custCheckoutUpiId) || OFFICIAL_UPI_IDS[0];
 
   if (!name) return showToast("Please enter your name");
-  if (!phone) return showToast("Please enter your WhatsApp / phone number");
+  if (!phone) return showToast("Please enter your WhatsApp number");
   if (!address) return showToast("Please enter your delivery address");
+  if (!_custCheckoutScreenshotDataUrl) {
+    return showToast("Please attach your UPI payment confirmation screenshot 📸");
+  }
 
   const selectedItems = catProducts.filter((p) => getCatItemState(p).selected);
   if (!selectedItems.length) return;
 
   const btn = document.getElementById("placeCustOrderBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "Submitting your order…"; }
+  if (btn) { btn.disabled = true; btn.textContent = "Submitting order & payment proof…"; }
 
   try {
     const shopId = FIREBASE_CFG.shopId;
@@ -1237,25 +1494,36 @@ window.submitCustomerCatalogueOrder = async () => {
       address,
       birthday: "",
       size: selectedItems.map((p) => getCatItemState(p).size).join(", "),
-      notes: "Ordered via Live Customer Catalogue",
+      notes: `Ordered via Live Catalogue · UPI: ${chosenUpiObj.id}`,
       createdAt: nowIso(),
       updatedAt: nowIso(),
       _u: now
     };
     await fbPut(`shops/${shopId}/data/customers/${custId}`, { _u: now, j: JSON.stringify(custRecord) });
 
-    // 2. Create a Sale order record for each selected outfit and decrement live stock
+    // Upload payment screenshot once to Firebase images
+    const payProofImgId = `pay_${now.toString(36)}_${uid().slice(-3)}`;
+    if (_custCheckoutScreenshotDataUrl) {
+      await fbPut(`shops/${shopId}/data/images/${payProofImgId}`, {
+        id: payProofImgId,
+        at: now,
+        data: _custCheckoutScreenshotDataUrl
+      });
+    }
+
+    // 2. Create a Sale order record for each selected outfit and decrement live variant stock
     let grandTotal = 0;
     const orderLines = [];
 
     for (const p of selectedItems) {
       const st = getCatItemState(p);
-      const orderQty = Math.max(1, Math.min(Number(p.qty) || 1, Number(st.qty) || 1));
+      const availVarQty = Math.max(1, getVariantQty(p, st.color, st.size));
+      const orderQty = Math.max(1, Math.min(availVarQty, Number(st.qty) || 1));
       const lineTotal = orderQty * (Number(p.price) || 0);
       grandTotal += lineTotal;
 
       const saleId = uid();
-      const itemNote = `Size: ${st.size} · Colour: ${st.color} · WhatsApp: ${phone} · Pay Pref: ${payPref}${extraNotes ? " · " + extraNotes : ""}`;
+      const itemNote = `Size: ${st.size} · Colour: ${st.color} · UPI Paid To: ${chosenUpiObj.id} · Payment Verification Pending${extraNotes ? " · " + extraNotes : ""}`;
       const newSale = {
         id: saleId,
         productId: p.id,
@@ -1267,7 +1535,7 @@ window.submitCustomerCatalogueOrder = async () => {
         customer: name,
         customerId: custId,
         customerPhone: phone,
-        seller: p.owner === "balkees" ? "balkees" : "vaheeda",
+        seller: chosenUpiObj.sister,
         channel: "Live Catalogue",
         date: todayIso(),
         notes: itemNote,
@@ -1278,6 +1546,12 @@ window.submitCustomerCatalogueOrder = async () => {
         address,
         isWebOrder: true,
         orderSeen: false,
+        selectedColor: st.color,
+        selectedSize: st.size,
+        upiId: chosenUpiObj.id,
+        paymentScreenshotId: payProofImgId,
+        paymentVerified: false,
+        // Order confirmed only after payment received & verified by sister/admin
         pays: [],
         returns: [],
         createdAt: nowIso(),
@@ -1285,33 +1559,46 @@ window.submitCustomerCatalogueOrder = async () => {
       };
       await fbPut(`shops/${shopId}/data/sales/${saleId}`, { _u: now, j: JSON.stringify(newSale) });
 
-      // Update product stock in Firebase
-      p.qty = Math.max(0, (Number(p.qty) || 0) - orderQty);
+      // Update product variantStock & total qty in Firebase
+      if (hasVariantStockMatrix(p)) {
+        const key = makeVariantKey(st.color, st.size);
+        let matchedKey = key;
+        for (const k of Object.keys(p.variantStock)) {
+          if (k.toLowerCase() === key.toLowerCase()) { matchedKey = k; break; }
+        }
+        p.variantStock[matchedKey] = Math.max(0, (Number(p.variantStock[matchedKey]) || 0) - orderQty);
+        p.qty = Object.values(p.variantStock).reduce((a, b) => a + Math.max(0, Number(b) || 0), 0);
+      } else {
+        p.qty = Math.max(0, (Number(p.qty) || 0) - orderQty);
+      }
       p._u = now;
       await fbPut(`shops/${shopId}/data/products/${p.id}`, { _u: now, j: JSON.stringify(p) });
 
-      orderLines.push(`• *${p.name}* × ${orderQty} (Size: ${st.size}, Colour: ${st.color}) — ${money(lineTotal)}`);
+      orderLines.push(`• *${p.name}* × ${orderQty} (Colour: ${st.color}, Size: ${st.size}) — ${money(lineTotal)}`);
     }
 
     const waSummary = [
-      `🛍️ *New Live Catalogue Order — ${catShopSettings.shopName}*`,
-      `👤 Customer: *${name}*`,
-      `📞 Phone: ${phone}`,
-      `📍 Address: ${address}`,
-      `💳 Payment Preference: ${payPref}`,
-      extraNotes ? `📝 Note: ${extraNotes}` : "",
+      `🛍️ *New Catalogue Order — ${catShopSettings.shopName}*`,
+      `⏳ *Status:* Awaiting Payment Verification (Confirmed once UPI payment is received)`,
+      `👤 *Customer:* ${name}`,
+      `📞 *WhatsApp:* ${phone}`,
+      `📍 *Address:* ${address}`,
+      `💳 *Paid via UPI To:* ${chosenUpiObj.id} (${chosenUpiObj.sister === "vaheeda" ? "Vaheeda" : "Balkees"})`,
+      `📸 *Payment Screenshot:* Uploaded & attached`,
+      extraNotes ? `📝 *Note/Ref:* ${extraNotes}` : "",
       ``,
       `*Ordered Outfits:*`,
       ...orderLines,
       ``,
-      `💖 *Total Order Amount: ${money(grandTotal)}*`
+      `💖 *Total Paid via UPI: ${money(grandTotal)}*`
     ].filter(Boolean).join("\n");
 
-    const waNum = String(catShopSettings.waCountry || "").replace(/\D/g, "");
-    const waUrl = `https://wa.me/${waNum}?text=${encodeURIComponent(waSummary)}`;
+    const savedScreenshotUrl = _custCheckoutScreenshotDataUrl;
+    window._lastOrderWaSummary = waSummary;
+    window._lastOrderScreenshot = savedScreenshotUrl;
 
-    // Clear selections and refresh live stock
-    catProducts = catProducts.filter((p) => Number(p.qty) > 0);
+    _custCheckoutScreenshotDataUrl = "";
+    catProducts = catProducts.filter((p) => Number(p.qty) > 0 && !p.archived);
     catSelections = {};
     renderLiveCatalogueDom();
 
@@ -1319,23 +1606,74 @@ window.submitCustomerCatalogueOrder = async () => {
     modalRoot.innerHTML = `
       <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
         <div class="modal-sheet" style="text-align:center;">
-          <div style="font-size:46px;margin-bottom:6px;">🎉</div>
-          <h3 style="margin:0 0 6px;font-size:21px;">Order Placed Successfully!</h3>
-          <p style="color:var(--muted);font-size:13px;margin:0 0 12px;">
-            Thank you, <b>${esc(name)}</b>! Your order has been sent directly to <b>${esc(catShopSettings.shopName)}</b> and live stock has been reserved for you.
+          <div style="font-size:44px;margin-bottom:4px;">🎉</div>
+          <h3 style="margin:0 0 4px;font-size:20px;">Order Submitted — Pending Payment Verification!</h3>
+          <p style="color:var(--muted);font-size:12.5px;margin:0 0 10px;">
+            Thank you, <b>${esc(name)}</b>! Your order & UPI screenshot (paid to <b>${esc(chosenUpiObj.id)}</b>) have been recorded. <b>Your order will be confirmed once payment is verified.</b>
           </p>
-          <div class="card" style="background:var(--bg);text-align:left;font-size:12.5px;white-space:pre-wrap;margin-bottom:14px;">${esc(waSummary)}</div>
-          <a href="${waUrl}" target="_blank" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;text-decoration:none;margin-bottom:8px;">
-            💬 Send Order Confirmation on WhatsApp
-          </a>
-          <button class="btn btn-soft" style="width:100%;" onclick="closeModal()">Continue Browsing</button>
+
+          ${savedScreenshotUrl ? `
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--green-soft);border-radius:12px;margin-bottom:10px;text-align:left;">
+              <img src="${savedScreenshotUrl}" style="width:48px;height:58px;object-fit:cover;border-radius:8px;border:1.5px solid var(--green);">
+              <div style="font-size:12px;">
+                <b style="color:var(--green);">✅ UPI Screenshot Uploaded</b><br>
+                <span>UPI ID: <b>${esc(chosenUpiObj.id)}</b></span>
+              </div>
+            </div>
+          ` : ""}
+
+          <div class="card" style="background:var(--bg);text-align:left;font-size:12px;white-space:pre-wrap;margin-bottom:12px;">${esc(waSummary)}</div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <button class="btn btn-primary" style="width:100%;padding:13px;" onclick="window.sendCustOrderWhatsAppWithProof('${SISTER_WHATSAPP_HELP.vaheeda.digits}')">
+              💬 Send Confirmation + UPI Screenshot to Vaheeda (${SISTER_WHATSAPP_HELP.vaheeda.display})
+            </button>
+            <button class="btn btn-primary" style="width:100%;padding:13px;" onclick="window.sendCustOrderWhatsAppWithProof('${SISTER_WHATSAPP_HELP.balkees.digits}')">
+              💬 Send Confirmation + UPI Screenshot to Balkees (${SISTER_WHATSAPP_HELP.balkees.display})
+            </button>
+            <button class="btn btn-gold" style="width:100%;padding:13px;" onclick="window.sendCustOrderToInstagram()">
+              📸 Send Order Confirmation to Instagram (@sisora.business)
+            </button>
+            <button class="btn btn-soft" style="width:100%;" onclick="closeModal()">Continue Browsing Catalogue</button>
+          </div>
         </div>
       </div>
     `;
   } catch (e) {
     showToast("Could not submit order: " + e.message);
-    if (btn) { btn.disabled = false; btn.textContent = "✅ Place Order Now"; }
+    if (btn) { btn.disabled = false; btn.textContent = "✅ Submit Order & Send Payment Confirmation"; }
   }
+};
+
+window.sendCustOrderWhatsAppWithProof = async (targetDigits) => {
+  const summary = window._lastOrderWaSummary || "";
+  const screenshotDataUrl = window._lastOrderScreenshot || "";
+  if (screenshotDataUrl && navigator.share) {
+    try {
+      const res = await fetch(screenshotDataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], "SISORA_UPI_Payment_Screenshot.jpg", { type: "image/jpeg" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: "SISORA Order & UPI Payment Screenshot",
+          text: summary,
+          files: [file]
+        });
+        return;
+      }
+    } catch (e) {}
+  }
+  const waUrl = `https://wa.me/${targetDigits}?text=${encodeURIComponent(summary)}`;
+  window.open(waUrl, "_blank");
+};
+
+window.sendCustOrderToInstagram = () => {
+  const summary = window._lastOrderWaSummary || "";
+  if (navigator.clipboard && summary) {
+    navigator.clipboard.writeText(summary).catch(() => {});
+  }
+  showToast("Order details copied! Paste in @sisora.business Instagram DM 📸");
+  window.open(SISORA_INSTAGRAM_URL, "_blank");
 };
 
 // ============================================================================
@@ -1358,7 +1696,6 @@ async function renderCustomerShareMode(shareId) {
     let shareData = await fbGet(`shops/${shopId}/data/shares/${shareId}`);
     const prefix = shareId.split("-")[0];
 
-    // If share record wasn't written yet or needs full product fallback, match from products collection
     const prodCol = await fbGet(`shops/${shopId}/data/products`);
     let matchedProd = null;
     if (prodCol && typeof prodCol === "object") {
@@ -1405,7 +1742,7 @@ async function renderCustomerShareMode(shareId) {
     const priceStr = (shareData && shareData.rawPrice) ? money(shareData.rawPrice) : (matchedProd ? money(matchedProd.price) : ((shareData && shareData.price) || ""));
     const sizes = (shareData && shareData.availableSizes) || (matchedProd && matchedProd.variant) || "Free Size / Custom";
     const colors = (shareData && shareData.availableColors) || (matchedProd && matchedProd.color) || "As Shown in Photos";
-    const inStock = matchedProd ? (Number(matchedProd.qty) > 0) : (shareData ? shareData.inStock !== false : true);
+    const inStock = matchedProd ? (Number(matchedProd.qty) > 0 && !matchedProd.archived) : (shareData ? shareData.inStock !== false : true);
     const qty = matchedProd ? Number(matchedProd.qty) : (shareData && shareData.qty ? Number(shareData.qty) : 1);
     const notes = (shareData && shareData.notes) || (matchedProd && matchedProd.notes) || "";
 
@@ -1417,9 +1754,13 @@ async function renderCustomerShareMode(shareId) {
     }
 
     const photos = [];
+    const byId = {};
     for (const pid of photoIds) {
       const im = await fbGet(`shops/${shopId}/data/images/${pid}`);
-      if (im && im.data) photos.push(im.data);
+      if (im && im.data) {
+        photos.push(im.data);
+        byId[pid] = im.data;
+      }
     }
 
     const hoursLeft = Math.max(1, Math.round((expiresAt - Date.now()) / 3600000));
@@ -1429,8 +1770,20 @@ async function renderCustomerShareMode(shareId) {
     window._showcasePhotos = photos;
     window._selectShowcasePhoto = (idx) => {
       const mainImg = document.getElementById("showcaseMainImg");
-      if (mainImg && photos[idx]) mainImg.src = photos[idx];
+      if (mainImg && window._showcasePhotos[idx]) mainImg.src = window._showcasePhotos[idx];
     };
+    window._selectShowcaseColor = (colName) => {
+      if (!matchedProd) return;
+      const ordered = getOrderedPhotosForProductColor(matchedProd, colName, byId);
+      if (ordered.length) {
+        window._showcasePhotos = ordered;
+        const mainImg = document.getElementById("showcaseMainImg");
+        if (mainImg) mainImg.src = ordered[0];
+      }
+    };
+
+    const colorList = String(colors).split(",").map((x) => x.trim()).filter(Boolean);
+    const sizeList = String(sizes).split(",").map((x) => x.trim()).filter(Boolean);
 
     root.innerHTML = `
       <div class="app-shell" style="padding-bottom:40px;">
@@ -1446,6 +1799,8 @@ async function renderCustomerShareMode(shareId) {
         </div>
 
         <div class="container">
+          ${renderCatalogueHelpBannerHtml()}
+
           <div class="prod-tile">
             ${coverImg ? `<div class="prod-blur-bg" style="background-image:url('${coverImg}')"></div>` : ""}
             <div class="prod-scrim" style="padding:16px;">
@@ -1473,19 +1828,27 @@ async function renderCustomerShareMode(shareId) {
                 </div>
                 <div style="text-align:right;">
                   <div style="font-size:24px;font-weight:900;color:var(--accent);">${esc(priceStr)}</div>
-                  <span class="pill ${inStock ? 'green' : 'red'}">${inStock ? `✅ Ready to Ship (${qty} left)` : "⏳ Pre-order / Sold Out"}</span>
+                  <span class="pill ${inStock ? 'green' : 'red'}">${inStock ? `✅ Ready to Ship (${qty} left)` : "⏳ Sold Out"}</span>
                 </div>
               </div>
 
               <div class="card" style="margin-top:14px;background:color-mix(in srgb, var(--bg) 80%, transparent);">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                  <div>
-                    <div style="font-size:11.5px;color:var(--muted);font-weight:700;">🎨 AVAILABLE COLOURS</div>
-                    <div style="font-size:14.5px;font-weight:800;margin-top:3px;">${esc(colors)}</div>
+                <div style="margin-bottom:10px;">
+                  <div style="font-size:11.5px;color:var(--muted);font-weight:700;margin-bottom:4px;">🎨 COLOURS (Tap to preview colour photo)</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                    ${colorList.map((cl) => {
+                      const avail = matchedProd ? isColorAvailable(matchedProd, cl) : true;
+                      return `<button type="button" ${!avail ? "disabled" : `onclick="window._selectShowcaseColor('${esc(cl)}')"`} style="padding:5px 10px;border-radius:99px;font-size:12px;font-weight:800;border:1px solid var(--line);background:${avail ? 'var(--card)' : 'var(--line)'};opacity:${avail ? '1' : '0.42'};text-decoration:${avail ? 'none' : 'line-through'};">${esc(cl)} ${avail ? "" : "(Out)"}</button>`;
+                    }).join("")}
                   </div>
-                  <div>
-                    <div style="font-size:11.5px;color:var(--muted);font-weight:700;">📏 AVAILABLE SIZES</div>
-                    <div style="font-size:14.5px;font-weight:800;margin-top:3px;">${esc(sizes)}</div>
+                </div>
+                <div>
+                  <div style="font-size:11.5px;color:var(--muted);font-weight:700;margin-bottom:4px;">📏 SIZES</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                    ${sizeList.map((sz) => {
+                      const avail = matchedProd ? getSizeTotalQty(matchedProd, sz) > 0 : true;
+                      return `<span style="padding:5px 10px;border-radius:99px;font-size:12px;font-weight:800;border:1px solid var(--line);background:${avail ? 'var(--card)' : 'var(--line)'};opacity:${avail ? '1' : '0.42'};text-decoration:${avail ? 'none' : 'line-through'};">${esc(sz)} ${avail ? "" : "(Out)"}</span>`;
+                    }).join("")}
                   </div>
                 </div>
                 ${notes ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);">${esc(notes)}</div>` : ""}
@@ -1494,10 +1857,10 @@ async function renderCustomerShareMode(shareId) {
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px;">
                 ${matchedProd && inStock ? `
                   <button class="btn btn-primary" style="padding:13px;" onclick="renderCustomerLiveCatalogueMode('${matchedProd.id}')">
-                    🛍️ Order Now
+                    🛍️ Select & Order via UPI
                   </button>
                 ` : ""}
-                <a href="https://wa.me/?text=${waText}" target="_blank" class="btn btn-gold" style="padding:13px;text-decoration:none;">
+                <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${waText}" target="_blank" class="btn btn-gold" style="padding:13px;text-decoration:none;">
                   💬 Ask on WhatsApp
                 </a>
               </div>
@@ -1955,7 +2318,7 @@ function renderWebOrdersAlertHtml() {
           <span style="font-size:22px;">🔔</span>
           <div>
             <div style="font-weight:900;font-size:15px;color:var(--accent);">New Customer Orders Received (${unseen.length})!</div>
-            <div style="font-size:11.5px;color:var(--muted);">Orders placed by customers through your Shared Catalogue / Product Link</div>
+            <div style="font-size:11.5px;color:var(--muted);">Order confirmed only after UPI payment is received & verified</div>
           </div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="markAllWebOrdersSeen()">✓ Mark All Seen</button>
@@ -1963,16 +2326,26 @@ function renderWebOrdersAlertHtml() {
       <div style="display:flex;flex-direction:column;gap:8px;">
         ${unseen.map((s) => {
           const phone = s.customerPhone || (db.customers.find((c) => c.id === s.customerId)?.phone) || "";
+          const paidSum = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+          const isPayVerified = Boolean(s.paymentVerified) || paidSum >= (Number(s.total) || 0);
           return `
             <div style="background:var(--card);padding:10px 12px;border-radius:12px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-              <div style="flex:1;min-width:180px;">
+              <div style="flex:1;min-width:190px;">
                 <div style="font-weight:800;font-size:14px;">🛍️ ${esc(s.productName)} × ${s.qty} — <span style="color:var(--accent);">${money(s.total)}</span></div>
                 <div style="font-size:12px;color:var(--muted);">👤 <b>${esc(s.customer || "Customer")}</b> ${phone ? `· 📞 ${esc(phone)}` : ""} · ${esc(s.date)}</div>
-                ${s.address ? `<div style="font-size:11.5px;color:var(--muted);">📍 ${esc(s.address)}</div>` : ""}
+                <div class="pill-row" style="margin-top:4px;">
+                  <span class="pill ${isPayVerified ? 'green' : 'amber'}">${isPayVerified ? "✅ Payment Received (Order Confirmed)" : "⏳ Payment Pending (Unconfirmed)"}</span>
+                  ${s.upiId ? `<span class="pill">💳 UPI: ${esc(s.upiId)}</span>` : ""}
+                </div>
+                ${s.address ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px;">📍 ${esc(s.address)}</div>` : ""}
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                ${s.paymentScreenshotId ? `<button class="btn btn-outline btn-sm" onclick="viewSalePaymentScreenshot('${s.id}')">🖼️ Screenshot</button>` : ""}
+                <button class="btn btn-sm ${isPayVerified ? 'btn-outline' : 'btn-primary'}" onclick="toggleSalePaymentVerified('${s.id}')">
+                  ${isPayVerified ? "⏳ Set Pending" : "✅ Payment Received"}
+                </button>
                 <button class="btn btn-gold btn-sm" onclick="sendLiveOrderStatusWhatsApp('${s.id}', 'ordered')">📲 WhatsApp Confirm</button>
-                <button class="btn btn-primary btn-sm" onclick="markSingleWebOrderSeen('${s.id}')">✓ Accept</button>
+                <button class="btn btn-soft btn-sm" onclick="markSingleWebOrderSeen('${s.id}')">✓ Seen</button>
               </div>
             </div>
           `;
@@ -1981,6 +2354,64 @@ function renderWebOrdersAlertHtml() {
     </div>
   `;
 }
+
+window.viewSalePaymentScreenshot = async function(saleId) {
+  const s = (db.sales || []).find((x) => x.id === saleId);
+  if (!s || !s.paymentScreenshotId) return showToast("No payment screenshot attached");
+  let im = imgMap.get(s.paymentScreenshotId);
+  if (!im || !im.data) {
+    showToast("Fetching UPI screenshot…");
+    try {
+      const remoteIm = await fbGet(`shops/${FIREBASE_CFG.shopId}/data/images/${s.paymentScreenshotId}`);
+      if (remoteIm && remoteIm.data) {
+        await putLocalImage(s.paymentScreenshotId, remoteIm.data, remoteIm.at || Date.now(), true);
+        im = imgMap.get(s.paymentScreenshotId);
+      }
+    } catch (e) {}
+  }
+  if (im && im.data) {
+    openLightbox([im.data], 0);
+  } else {
+    showToast("Payment screenshot not found on server");
+  }
+};
+
+window.toggleSalePaymentVerified = function(saleId) {
+  const s = (db.sales || []).find((x) => x.id === saleId);
+  if (!s) return;
+  const now = Date.now();
+  const paidSum = (s.pays || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+  const currentlyVerified = Boolean(s.paymentVerified) || paidSum >= (Number(s.total) || 0);
+
+  if (currentlyVerified) {
+    s.paymentVerified = false;
+    s.pays = [];
+    showToast("⏳ Marked as Payment Pending (Order Unconfirmed)");
+  } else {
+    s.paymentVerified = true;
+    s.orderSeen = true;
+    const total = Number(s.total) || 0;
+    const isBalkeesUpi = String(s.upiId || "").toLowerCase().includes("balkees") || s.seller === "balkees";
+    const recBy = isBalkeesUpi ? "balkees" : "vaheeda";
+    s.pays = [{
+      id: uid(),
+      date: todayIso(),
+      amount: total,
+      method: s.upiId ? `UPI (${s.upiId})` : "UPI / GPay",
+      receivedBy: recBy,
+      vaheedaAmount: recBy === "vaheeda" ? total : 0,
+      balkeesAmount: recBy === "balkees" ? total : 0,
+      note: s.upiId ? `Verified UPI payment to ${s.upiId}` : "Verified payment"
+    }];
+    showToast(`✅ Payment Received! Order Confirmed & credited to ${recBy === "balkees" ? "Balkees" : "Vaheeda"}`);
+  }
+  s._u = now;
+  saveLocalDb();
+  outbox.add(`sales/${s.id}`);
+  saveOutbox();
+  renderApp();
+  pushOutboxToFirebase();
+};
 
 window.markSingleWebOrderSeen = function(saleId) {
   const s = db.sales.find((x) => x.id === saleId);
@@ -2011,22 +2442,36 @@ window.markAllWebOrdersSeen = function() {
   showToast("All new customer orders marked as seen ✓");
 };
 
+const _appCardSelectedColors = {};
+window.selectAppProdCardColor = function(prodId, colName) {
+  _appCardSelectedColors[prodId] = colName;
+  renderApp();
+};
+
 function renderProductCardHtml(p) {
   const photoIds = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
-  const coverId = photoIds[0] || p.id;
-  const coverIm = imgMap.get(coverId);
-  const coverUrl = coverIm ? coverIm.data : "";
+  const idToUrl = {};
+  photoIds.forEach((pid) => {
+    const im = imgMap.get(pid);
+    if (im && im.data) idToUrl[pid] = im.data;
+  });
+  const activeCol = _appCardSelectedColors[p.id] || "";
+  const orderedUrls = getOrderedPhotosForProductColor(p, activeCol, idToUrl);
+  const coverUrl = orderedUrls[0] || (imgMap.get(photoIds[0] || p.id)?.data || "");
   const qty = Number(p.qty) || 0;
   const low = Number(p.low) || 2;
   const hidePriv = db.settings.privacy;
   const isArchived = Boolean(p.archived);
+  const colors = parseColorsList(p);
+  const sizes = parseSizesList(p);
+  const ownerLbl = p.owner === "vaheeda" ? "🌷 Vaheeda" : (p.owner === "balkees" ? "🌸 Balkees" : (p.owner === "split" ? "👭 Split" : "👭 Joint"));
 
   return `
     <div class="prod-tile" style="${isArchived ? 'opacity:0.78;border-style:dashed;' : ''}">
       ${coverUrl ? `<div class="prod-blur-bg" style="background-image:url('${coverUrl}')"></div>` : ""}
       <div class="prod-scrim">
         <div class="prod-row">
-          <div class="prod-thumb" onclick="openProductGallery('${p.id}')">
+          <div class="prod-thumb" onclick="openProductGallery('${p.id}', '${esc(activeCol)}')">
             ${coverUrl ? `<img src="${coverUrl}" alt="${esc(p.name)}">` : "👗"}
             ${photoIds.length > 1 ? `<span class="photo-count-badge">📷 ${photoIds.length}</span>` : ""}
           </div>
@@ -2036,24 +2481,31 @@ function renderProductCardHtml(p) {
               <span style="color:var(--accent);font-size:16px;">${money(p.price)}</span>
             </div>
             <div class="prod-meta">
-              ${p.code ? `<b>${esc(p.code)}</b> · ` : ""}${esc(p.category || "Kurti")}
+              ${p.code ? `<b>${esc(p.code)}</b> · ` : ""}${esc(p.category || "Kurti")} · ${ownerLbl}
               ${!hidePriv ? ` · Cost: ${money(p.cost)}` : ""}
             </div>
             <div class="pill-row">
-              ${p.variant ? `<span class="pill">📏 ${esc(p.variant)}</span>` : ""}
-              ${p.color ? `<span class="pill">🎨 ${esc(p.color)}</span>` : ""}
+              ${sizes.map((sz) => {
+                const avail = getSizeTotalQty(p, sz) > 0;
+                const szQty = hasVariantStockMatrix(p) ? getSizeTotalQty(p, sz) : null;
+                return `<span class="pill" style="opacity:${avail ? '1' : '0.42'};text-decoration:${avail ? 'none' : 'line-through'};">📏 ${esc(sz)}${szQty !== null ? ` (${szQty})` : ""}</span>`;
+              }).join("")}
+              ${colors.map((cl) => {
+                const avail = isColorAvailable(p, cl);
+                const clQty = hasVariantStockMatrix(p) ? getColorTotalQty(p, cl) : null;
+                const isSel = activeCol && activeCol.toLowerCase() === cl.toLowerCase();
+                return `<span class="pill" onclick="selectAppProdCardColor('${p.id}', '${esc(cl)}')" style="cursor:pointer;opacity:${avail ? '1' : '0.42'};text-decoration:${avail ? 'none' : 'line-through'};${isSel ? 'background:var(--accent);color:#fff;' : ''}">🎨 ${esc(cl)}${clQty !== null ? ` (${clQty})` : ""}</span>`;
+              }).join("")}
               <span class="pill ${qty <= 0 ? 'red' : (qty <= low ? 'amber' : 'green')}">
                 ${qty <= 0 ? "Sold out" : `${qty} in stock`}
               </span>
-              ${isArchived ? `<span class="pill amber">🙈 Hidden from Catalogue</span>` : `<span class="pill green">👁️ In Catalogue</span>`}
+              ${isArchived ? `<span class="pill amber">🙈 Hidden</span>` : `<span class="pill green">👁️ In Catalogue</span>`}
             </div>
           </div>
         </div>
         <div class="prod-actions">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <button class="btn btn-outline btn-sm" onclick="adjustProductQty('${p.id}', -1)">−</button>
-            <span style="font-weight:800;font-size:13px;min-width:22px;text-align:center;">${qty}</span>
-            <button class="btn btn-outline btn-sm" onclick="adjustProductQty('${p.id}', 1)">+</button>
+          <div style="font-size:12px;font-weight:800;color:var(--muted);">
+            📦 Total Stock: <b style="color:var(--ink);">${qty} pcs</b> <span style="font-size:10.5px;">(Edit to change)</span>
           </div>
           <div style="display:flex;gap:5px;flex-wrap:wrap;">
             <button class="btn btn-outline btn-sm" onclick="toggleArchiveProduct('${p.id}')" title="Hide or Show in Customer Catalogue">
@@ -2393,6 +2845,7 @@ function renderSalesTab() {
       const bal = Math.max(0, netTot - paid);
       const custPhone = s.customerPhone || (db.customers.find((c) => c.id === s.customerId)?.phone) || "";
       const firstPay = (s.pays || [])[0];
+      const isPayVerified = Boolean(s.paymentVerified) || paid >= netTot;
       const recByLbl = firstPay
         ? (firstPay.receivedBy === "split"
             ? `Split (V: ${money(firstPay.vaheedaAmount)} · B: ${money(firstPay.balkeesAmount)})`
@@ -2409,6 +2862,8 @@ function renderSalesTab() {
               </div>
               <div style="font-size:12px;color:var(--muted);">${esc(s.date)} · 👤 <b>${esc(s.customer || "Walk-in")}</b> ${custPhone ? `· 📞 ${esc(custPhone)}` : ""} · via ${esc(s.channel || "Instagram")}</div>
               <div class="pill-row" style="margin-top:4px;">
+                <span class="pill ${isPayVerified ? 'green' : 'amber'}">${isPayVerified ? "✅ Payment Received (Order Confirmed)" : "⏳ Payment Pending (Order Unconfirmed)"}</span>
+                ${s.upiId ? `<span class="pill">💳 UPI: ${esc(s.upiId)}</span>` : ""}
                 <span class="pill">Sold: ${esc(s.seller === "balkees" ? "Balkees" : (s.seller === "both" ? "Both" : "Vaheeda"))}</span>
                 <span class="pill green">💰 Payment Got By: ${recByLbl}</span>
               </div>
@@ -2445,6 +2900,10 @@ function renderSalesTab() {
               ${["ordered", "packed", "shipped", "delivered"].map((st) => `<option value="${st}" ${s.status === st ? 'selected' : ''}>Status: ${st.toUpperCase()}</option>`).join("")}
             </select>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${s.paymentScreenshotId ? `<button class="btn btn-outline btn-sm" onclick="viewSalePaymentScreenshot('${s.id}')">🖼️ View UPI Screenshot</button>` : ""}
+              <button class="btn btn-sm ${isPayVerified ? 'btn-outline' : 'btn-primary'}" onclick="toggleSalePaymentVerified('${s.id}')">
+                ${isPayVerified ? "⏳ Set Payment Pending" : "✅ Payment Received (Confirm)"}
+              </button>
               ${bal > 0 ? `<button class="btn btn-soft btn-sm" onclick="openReceiveSalePaymentModal('${s.id}')">💰 Receive Pay</button>` : ""}
               <button class="btn btn-gold btn-sm" onclick="openSalesReturnModal('${s.id}')">↩️ Sales Return</button>
               <button class="btn btn-danger btn-sm" onclick="deleteSaleItem('${s.id}')">🗑</button>
@@ -3730,9 +4189,10 @@ window.confirmSplitAmountPopup = function() {
   if (typeof cb === "function") cb(v, b);
 };
 
-// ---- Add / Edit Product Modal (with Multiple Photo Upload + Crop & Rotate + Archive Toggle) ----
-let draftPhotos = []; // Array of { id, data }
+// ---- Add / Edit Product Modal (Name -> SKU/Code -> Category -> Size -> Colours -> Colour-Specific Photos -> Quantity Matrix by Colour & Size -> Cost -> Selling Price -> Owner) ----
+let draftPhotos = []; // Array of { id, data, color }
 let editingProdId = null;
+let _draftProdVariantStock = {};
 
 window.openProductModal = function(prodId = null) {
   editingProdId = prodId;
@@ -3741,12 +4201,17 @@ window.openProductModal = function(prodId = null) {
   window._draftProdBaseId = baseId;
 
   draftPhotos = [];
+  _draftProdVariantStock = {};
   if (existing) {
     const ids = Array.isArray(existing.photoIds) && existing.photoIds.length ? existing.photoIds : (existing.imgAt ? [existing.id] : []);
+    const pColMap = (existing.photoColorMap && typeof existing.photoColorMap === "object") ? existing.photoColorMap : {};
     ids.forEach((pid) => {
       const im = imgMap.get(pid);
-      if (im && im.data) draftPhotos.push({ id: pid, data: im.data });
+      if (im && im.data) draftPhotos.push({ id: pid, data: im.data, color: pColMap[pid] || "" });
     });
+    if (existing.variantStock && typeof existing.variantStock === "object") {
+      _draftProdVariantStock = { ...existing.variantStock };
+    }
   }
   renderProductModalDom(existing);
 };
@@ -3757,100 +4222,196 @@ function readCurrentProductDraftForm() {
     name: document.getElementById("pName")?.value || "",
     code: document.getElementById("pCode")?.value || "",
     category: document.getElementById("pCat")?.value || "Kurti",
-    qty: document.getElementById("pQty")?.value ?? 1,
-    variant: document.getElementById("pVar")?.value || "",
-    color: document.getElementById("pCol")?.value || "",
+    variant: document.getElementById("pVar")?.value || "S, M, L, XL",
+    color: document.getElementById("pCol")?.value || "As Shown",
     cost: document.getElementById("pCost")?.value || "",
     price: document.getElementById("pPrice")?.value || "",
-    owner: document.getElementById("pOwner")?.value || "joint",
-    archived: Boolean(document.getElementById("pArchived")?.checked)
+    owner: document.getElementById("pOwner")?.value || "vaheeda",
+    archived: Boolean(document.getElementById("pArchived")?.checked),
+    variantStock: { ..._draftProdVariantStock }
   };
 }
 
+window.onProdVariantMatrixChanged = function(colName, szName, val) {
+  const key = makeVariantKey(colName, szName);
+  _draftProdVariantStock[key] = Math.max(0, Number(val) || 0);
+  const sum = Object.values(_draftProdVariantStock).reduce((a, v) => a + (Number(v) || 0), 0);
+  const totEl = document.getElementById("pTotalQtyBadge");
+  if (totEl) totEl.textContent = `${sum} pcs`;
+};
+
+window.refreshProdVariantGrid = function() {
+  const cur = readCurrentProductDraftForm();
+  renderProductModalDom(cur);
+};
+
+window.setDraftPhotoColorTag = function(idx, colVal) {
+  if (draftPhotos[idx]) {
+    draftPhotos[idx].color = colVal || "";
+  }
+};
+
 function renderProductModalDom(existing) {
-  const p = existing || { name: "", code: "", category: "Kurti", variant: "M, L, XL", color: "", cost: "", price: "", qty: 1, low: 2, owner: "joint", notes: "", archived: false };
+  const p = existing || { name: "", code: "", category: "Kurti", variant: "M, L, XL", color: "Emerald, Rose", cost: "", price: "", qty: 1, low: 2, owner: "vaheeda", notes: "", archived: false };
+  const sizes = String(p.variant || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+  const colors = String(p.color || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+  const sizeCols = sizes.length ? sizes : ["Free Size"];
+  const colorRows = colors.length ? colors : ["As Shown"];
+
+  // Ensure default quantities if matrix is empty on first open
+  if (Object.keys(_draftProdVariantStock).length === 0) {
+    const firstKey = makeVariantKey(colorRows[0], sizeCols[0]);
+    _draftProdVariantStock[firstKey] = Math.max(0, Number(p.qty ?? 1));
+  }
+
+  let totalMatrixQty = 0;
+  colorRows.forEach((cl) => {
+    sizeCols.forEach((sz) => {
+      totalMatrixQty += Math.max(0, Number(_draftProdVariantStock[makeVariantKey(cl, sz)]) || 0);
+    });
+  });
+
   const modalRoot = document.getElementById("modalRoot");
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>${editingProdId ? "✏️ Edit Outfit" : "👗 Add New Outfit"}</h3>
+          <h3>${editingProdId ? "✏️ Edit Outfit & Variant Stock" : "👗 Add New Outfit"}</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
         </div>
 
-        <div class="field">
-          <label>📸 Product Photos (${draftPhotos.length} uploaded · Tap ✂️ on any photo to crop/rotate)</label>
-          <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;align-items:center;">
-            <label class="btn btn-soft" style="height:88px;min-width:94px;flex-direction:column;font-size:12px;flex-shrink:0;">
-              <span style="font-size:22px;">📷</span>
-              <span>Add Photos</span>
-              <input type="file" accept="image/*" multiple style="display:none;" onchange="handleMultiPhotoSelect(this.files)">
-            </label>
-            ${draftPhotos.map((ph, idx) => `
-              <div style="position:relative;width:82px;height:88px;border-radius:12px;overflow:hidden;border:2px solid ${idx === 0 ? 'var(--accent)' : 'var(--line)'};flex-shrink:0;">
-                <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;" onclick="makeDraftPhotoCover(${idx})" title="Tap to set as cover">
-                <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,0.72);color:#fff;font-size:9px;padding:1px 5px;border-radius:6px;">
-                  ${idx === 0 ? "★ Cover" : `#${idx + 1}`}
-                </span>
-                <button onclick="cropDraftPhotoAtIndex(${idx})" style="position:absolute;bottom:2px;right:2px;background:rgba(200,95,131,0.92);color:#fff;padding:1px 5px;border-radius:6px;font-size:10px;font-weight:700;" title="Crop & Rotate">✂️</button>
-                <button onclick="removeDraftPhoto(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.85);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;">✕</button>
-              </div>
-            `).join("")}
-          </div>
-        </div>
-
+        <!-- 1. Name & 2. SKU/Code -->
         <div class="field-row">
           <div class="field">
-            <label>Outfit Name *</label>
+            <label>1. Outfit Name *</label>
             <input id="pName" value="${esc(p.name)}" placeholder="e.g. Floral Organza Kurti">
           </div>
           <div class="field">
-            <label>SKU / Code</label>
+            <label>2. SKU / Code</label>
             <input id="pCode" value="${esc(p.code)}" placeholder="e.g. SIS-104">
           </div>
         </div>
 
+        <!-- 3. Category & 4. Size -->
         <div class="field-row">
           <div class="field">
-            <label>Category</label>
+            <label>3. Category</label>
             <select id="pCat">
               ${(db.settings.categories || DEFAULT_SETTINGS.categories).map((c) => `<option value="${esc(c)}" ${p.category === c ? 'selected' : ''}>${esc(c)}</option>`).join("")}
             </select>
           </div>
           <div class="field">
-            <label>Stock Quantity</label>
-            <input id="pQty" type="number" inputmode="numeric" value="${p.qty}">
+            <label>4. Sizes (comma separated)</label>
+            <input id="pVar" value="${esc(p.variant)}" placeholder="S, M, L, XL" onchange="refreshProdVariantGrid()">
           </div>
         </div>
 
-        <div class="field-row">
-          <div class="field">
-            <label>Available Sizes</label>
-            <input id="pVar" value="${esc(p.variant)}" placeholder="S, M, L, XL">
-          </div>
-          <div class="field">
-            <label>Available Colours</label>
-            <input id="pCol" value="${esc(p.color)}" placeholder="Emerald, Rose, Ivory">
+        <!-- 5. Colours -->
+        <div class="field">
+          <label>5. Colours (comma separated — updates Photo Tags & Quantity Grid below)</label>
+          <div style="display:flex;gap:6px;">
+            <input id="pCol" value="${esc(p.color)}" placeholder="Emerald, Rose, Ivory" onchange="refreshProdVariantGrid()" style="flex:1;">
+            <button type="button" class="btn btn-soft btn-sm" onclick="refreshProdVariantGrid()">↻ Update Grid</button>
           </div>
         </div>
 
+        <!-- Colour-Specific Image Upload -->
+        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+          <label style="color:var(--accent);">📸 Colour-Specific & General Outfit Photos (${draftPhotos.length} uploaded)</label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+            Upload photos for each colour! When a customer selects a colour in the catalogue, the image automatically switches to that colour's photo.
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+            <label class="btn btn-soft btn-sm">
+              📷 + General Photo
+              <input type="file" accept="image/*" multiple style="display:none;" onchange="handleMultiPhotoSelect(this.files, '')">
+            </label>
+            ${colorRows.map((cl) => `
+              <label class="btn btn-outline btn-sm" style="border-color:var(--accent);">
+                🎨 + ${esc(cl)} Photo
+                <input type="file" accept="image/*" multiple style="display:none;" onchange="handleMultiPhotoSelect(this.files, '${esc(cl)}')">
+              </label>
+            `).join("")}
+          </div>
+
+          <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;align-items:flex-start;">
+            ${draftPhotos.map((ph, idx) => `
+              <div style="width:105px;flex-shrink:0;background:var(--card);border-radius:12px;padding:5px;border:2px solid ${idx === 0 ? 'var(--accent)' : 'var(--line)'};">
+                <div style="position:relative;width:100%;height:86px;border-radius:8px;overflow:hidden;">
+                  <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;" onclick="makeDraftPhotoCover(${idx})" title="Tap to set as cover">
+                  <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,0.72);color:#fff;font-size:9px;padding:1px 5px;border-radius:6px;">
+                    ${idx === 0 ? "★ Cover" : `#${idx + 1}`}
+                  </span>
+                  <button type="button" onclick="cropDraftPhotoAtIndex(${idx})" style="position:absolute;bottom:2px;right:2px;background:rgba(200,95,131,0.92);color:#fff;padding:1px 5px;border-radius:6px;font-size:10px;font-weight:700;">✂️</button>
+                  <button type="button" onclick="removeDraftPhoto(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.85);color:#fff;width:18px;height:18px;border-radius:50%;font-size:10px;">✕</button>
+                </div>
+                <select style="margin-top:4px;padding:3px 4px;font-size:10.5px;border-radius:6px;" onchange="setDraftPhotoColorTag(${idx}, this.value)">
+                  <option value="" ${!ph.color ? 'selected' : ''}>All Colours</option>
+                  ${colorRows.map((cl) => `<option value="${esc(cl)}" ${String(ph.color || '').toLowerCase() === cl.toLowerCase() ? 'selected' : ''}>🎨 ${esc(cl)}</option>`).join("")}
+                </select>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <!-- 6. Quantity (Separated by Colours and Sizes Matrix) -->
+        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="margin:0;color:var(--accent);">6. Quantity (Separated by Colours & Sizes)</label>
+            <span class="pill green" id="pTotalQtyBadge">${totalMatrixQty} pcs</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">
+            Set stock quantity for each Colour × Size combination (0 = grayed out & unselectable in catalogue):
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:5px;border-bottom:1px solid var(--line);">Colour \\ Size</th>
+                  ${sizeCols.map((sz) => `<th style="text-align:center;padding:5px;border-bottom:1px solid var(--line);">📏 ${esc(sz)}</th>`).join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${colorRows.map((cl) => `
+                  <tr>
+                    <td style="padding:5px;font-weight:800;border-bottom:1px solid var(--line);">🎨 ${esc(cl)}</td>
+                    ${sizeCols.map((sz) => {
+                      const k = makeVariantKey(cl, sz);
+                      const v = Math.max(0, Number(_draftProdVariantStock[k]) || 0);
+                      return `
+                        <td style="padding:4px;text-align:center;border-bottom:1px solid var(--line);">
+                          <input type="number" min="0" inputmode="numeric" value="${v}"
+                            style="width:56px;padding:5px;text-align:center;font-weight:800;"
+                            oninput="onProdVariantMatrixChanged('${esc(cl)}', '${esc(sz)}', this.value)">
+                        </td>
+                      `;
+                    }).join("")}
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 7. Cost & 8. Selling Price -->
         <div class="field-row">
           <div class="field">
-            <label>Cost Price (₹)</label>
+            <label>7. Cost Price (₹)</label>
             <input id="pCost" type="number" inputmode="decimal" value="${p.cost}">
           </div>
           <div class="field">
-            <label>Selling Price (₹) *</label>
+            <label>8. Selling Price (₹) *</label>
             <input id="pPrice" type="number" inputmode="decimal" value="${p.price}">
           </div>
         </div>
 
+        <!-- 9. Owner (Vaheeda / Balkees / Split) -->
         <div class="field">
-          <label>Owner</label>
+          <label>9. Owner (Vaheeda / Balkees / Split)</label>
           <select id="pOwner">
-            <option value="joint" ${p.owner === 'joint' ? 'selected' : ''}>👭 Joint (Vaheeda & Balkees)</option>
             <option value="vaheeda" ${p.owner === 'vaheeda' ? 'selected' : ''}>🌷 Vaheeda</option>
             <option value="balkees" ${p.owner === 'balkees' ? 'selected' : ''}>🌸 Balkees</option>
+            <option value="split" ${(p.owner === 'split' || p.owner === 'joint') ? 'selected' : ''}>👭 Split (Vaheeda & Balkees)</option>
           </select>
         </div>
 
@@ -3871,21 +4432,21 @@ function renderProductModalDom(existing) {
   `;
 }
 
-window.handleMultiPhotoSelect = async function(fileList) {
+window.handleMultiPhotoSelect = async function(fileList, defaultColor = "") {
   if (!fileList || !fileList.length) return;
   const curState = readCurrentProductDraftForm();
   const files = Array.from(fileList);
   for (const file of files) {
     const dataUrl = await compressImageFile(file, 960, 0.85);
     const pid = draftPhotos.length === 0 ? window._draftProdBaseId : `${window._draftProdBaseId}_p${uid().slice(-4)}`;
-    draftPhotos.push({ id: pid, data: dataUrl });
+    draftPhotos.push({ id: pid, data: dataUrl, color: defaultColor || "" });
   }
   renderProductModalDom(curState);
   if (files.length === 1) {
     const lastIdx = draftPhotos.length - 1;
     window.cropDraftPhotoAtIndex(lastIdx);
   } else {
-    showToast(`${files.length} photos added · Tap ✂️ on any photo to crop/rotate`);
+    showToast(`${files.length} photos added${defaultColor ? ` for ${defaultColor}` : ""}`);
   }
 };
 
@@ -3922,23 +4483,43 @@ window.saveProductFromModal = async function() {
     draftPhotos[0].id = id;
   }
   const photoIds = draftPhotos.map((x) => x.id);
+  const photoColorMap = {};
   for (const ph of draftPhotos) {
     await putLocalImage(ph.id, ph.data, now, false);
+    if (ph.color) photoColorMap[ph.id] = ph.color;
   }
+
+  const variantStr = (document.getElementById("pVar")?.value || "").trim() || "Free Size";
+  const colorStr = (document.getElementById("pCol")?.value || "").trim() || "As Shown";
+  const sizes = variantStr.split(",").map((x) => x.trim()).filter(Boolean);
+  const colors = colorStr.split(",").map((x) => x.trim()).filter(Boolean);
+
+  const cleanVariantStock = {};
+  let totalQty = 0;
+  (colors.length ? colors : ["As Shown"]).forEach((cl) => {
+    (sizes.length ? sizes : ["Free Size"]).forEach((sz) => {
+      const k = makeVariantKey(cl, sz);
+      const v = Math.max(0, Number(_draftProdVariantStock[k]) || 0);
+      cleanVariantStock[k] = v;
+      totalQty += v;
+    });
+  });
 
   const item = {
     id,
     name,
     code: (document.getElementById("pCode")?.value || "").trim(),
     category: document.getElementById("pCat")?.value || "Kurti",
-    variant: (document.getElementById("pVar")?.value || "").trim(),
-    color: (document.getElementById("pCol")?.value || "").trim(),
+    variant: variantStr,
+    color: colorStr,
     cost: Number(document.getElementById("pCost")?.value) || 0,
     price: Number(document.getElementById("pPrice")?.value) || 0,
-    qty: Number(document.getElementById("pQty")?.value) || 0,
+    qty: totalQty,
     low: 2,
-    owner: document.getElementById("pOwner")?.value || "joint",
+    owner: document.getElementById("pOwner")?.value || "vaheeda",
     archived: Boolean(document.getElementById("pArchived")?.checked),
+    variantStock: cleanVariantStock,
+    photoColorMap,
     notes: "",
     imgAt: photoIds.length ? now : 0,
     photoIds,
@@ -3957,19 +4538,7 @@ window.saveProductFromModal = async function() {
   closeModal();
   renderApp();
   pushOutboxToFirebase();
-  showToast("Outfit saved & synced ✨");
-};
-
-window.adjustProductQty = function(prodId, delta) {
-  const p = db.products.find((x) => x.id === prodId);
-  if (!p) return;
-  p.qty = Math.max(0, (Number(p.qty) || 0) + delta);
-  p._u = Date.now();
-  saveLocalDb();
-  outbox.add(`products/${p.id}`);
-  saveOutbox();
-  renderApp();
-  pushOutboxToFirebase();
+  showToast("Outfit & colour-size stock saved ✨");
 };
 
 // ---- Delete Approval Workflow (Admin Approval or Admin PIN Required) ----
@@ -4156,11 +4725,16 @@ window.shareLiveCatalogueLink = async function(viaWhatsApp = false) {
 };
 
 // ---- Multi-Photo Gallery Lightbox ----
-window.openProductGallery = function(prodId) {
+window.openProductGallery = function(prodId, preferredColor = "") {
   const p = db.products.find((x) => x.id === prodId);
   if (!p) return;
   const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : [p.id];
-  const urls = ids.map((id) => imgMap.get(id)?.data).filter(Boolean);
+  const idToUrl = {};
+  ids.forEach((id) => {
+    const im = imgMap.get(id);
+    if (im && im.data) idToUrl[id] = im.data;
+  });
+  const urls = getOrderedPhotosForProductColor(p, preferredColor, idToUrl);
   if (!urls.length) return showToast("No photos uploaded for this outfit yet");
   openLightbox(urls, 0);
 };
@@ -4304,7 +4878,12 @@ window.executeCustomerShare = async function(prodId, shareId, tempUrl) {
   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
 };
 
-// ---- Purchase Entry Modal (with Split Payment Popup, Invoice Upload & Funding Source) ----
+// ============================================================================
+// Purchase Entry Modal:
+// Exact Requested Flow:
+// Name ---> SKU/Code ---> Category ---> Size ---> Colours (+ Colour-Specific Photos)
+// ---> Quantity (separated by Colours & Sizes) ---> Cost ---> Selling Price ---> Owner (Vaheeda / Balkees / Split)
+// ============================================================================
 let _draftPurState = null;
 
 window.openPurchaseModal = function(purId = null) {
@@ -4317,22 +4896,42 @@ window.openPurchaseModal = function(purId = null) {
       if (im && im.data) invoices.push({ id: iid, data: im.data });
     });
   }
+  const prodPhotos = [];
+  if (existing && Array.isArray(existing.photoIds)) {
+    const pMap = (existing.photoColorMap && typeof existing.photoColorMap === "object") ? existing.photoColorMap : {};
+    existing.photoIds.forEach((pid) => {
+      const im = imgMap.get(pid);
+      if (im && im.data) prodPhotos.push({ id: pid, data: im.data, color: pMap[pid] || "" });
+    });
+  }
+  const initMatrix = (existing && existing.variantStock && typeof existing.variantStock === "object")
+    ? { ...existing.variantStock }
+    : { "Emerald|M": existing?.qty ?? 1 };
+
   _draftPurState = {
     isEdit: Boolean(existing),
     id: baseId,
-    supplier: existing?.supplier || "",
-    invoiceNo: existing?.invoiceNo || "",
-    itemsSummary: existing?.itemsSummary || existing?.productName || "",
     productId: existing?.productId || "",
-    qty: existing?.qty ?? 1,
-    totalAmount: existing?.totalAmount || "",
+    // 1. Name -> 2. SKU/Code -> 3. Category -> 4. Size -> 5. Colours -> 6. Quantity Matrix -> 7. Cost -> 8. Selling Price -> 9. Owner
+    productName: existing?.productName || existing?.itemsSummary || "",
+    sku: existing?.sku || "",
+    category: existing?.category || "Kurti",
+    sizes: existing?.sizes || "M, L, XL",
+    colors: existing?.colors || "Emerald, Rose",
+    variantStock: initMatrix,
+    unitCost: existing?.unitCost || "",
+    sellingPrice: existing?.sellingPrice || "",
     paidBy: existing?.paidBy || (currentAccount?.id === "balkees" ? "balkees" : "vaheeda"),
     vaheedaPaid: existing?.vaheedaPaid || 0,
     balkeesPaid: existing?.balkeesPaid || 0,
+    supplier: existing?.supplier || "",
+    invoiceNo: existing?.invoiceNo || "",
+    totalAmount: existing?.totalAmount || "",
     fundingSource: existing?.fundingSource || "available_cash",
     method: existing?.method || "UPI / GPay",
     date: existing?.date || todayIso(),
     notes: existing?.notes || "",
+    prodPhotos,
     invoices
   };
   renderPurchaseModalDom();
@@ -4340,28 +4939,134 @@ window.openPurchaseModal = function(purId = null) {
 
 function syncDraftPurFieldsFromDom() {
   if (!_draftPurState) return;
+  _draftPurState.productName = document.getElementById("purProdName")?.value ?? _draftPurState.productName;
+  _draftPurState.sku = document.getElementById("purSku")?.value ?? _draftPurState.sku;
+  _draftPurState.category = document.getElementById("purCat")?.value ?? _draftPurState.category;
+  _draftPurState.sizes = document.getElementById("purSizes")?.value ?? _draftPurState.sizes;
+  _draftPurState.colors = document.getElementById("purColors")?.value ?? _draftPurState.colors;
+  _draftPurState.unitCost = document.getElementById("purUnitCost")?.value ?? _draftPurState.unitCost;
+  _draftPurState.sellingPrice = document.getElementById("purSellPrice")?.value ?? _draftPurState.sellingPrice;
   _draftPurState.supplier = document.getElementById("purSupplier")?.value ?? _draftPurState.supplier;
   _draftPurState.invoiceNo = document.getElementById("purInvNo")?.value ?? _draftPurState.invoiceNo;
-  _draftPurState.itemsSummary = document.getElementById("purDesc")?.value ?? _draftPurState.itemsSummary;
-  _draftPurState.productId = document.getElementById("purProdId")?.value ?? _draftPurState.productId;
-  _draftPurState.qty = Number(document.getElementById("purQty")?.value ?? _draftPurState.qty) || 1;
   _draftPurState.totalAmount = document.getElementById("purAmt")?.value ?? _draftPurState.totalAmount;
   _draftPurState.fundingSource = document.getElementById("purFundSrc")?.value ?? _draftPurState.fundingSource;
   _draftPurState.method = document.getElementById("purMethod")?.value ?? _draftPurState.method;
   _draftPurState.date = document.getElementById("purDate")?.value ?? _draftPurState.date;
-  _draftPurState.notes = document.getElementById("purNotes")?.value ?? _draftPurState.notes;
 }
+
+window.onPurSelectExistingProd = function(prodId) {
+  syncDraftPurFieldsFromDom();
+  if (!_draftPurState) return;
+  _draftPurState.productId = prodId || "";
+  const p = db.products.find((x) => x.id === prodId);
+  if (p) {
+    _draftPurState.productName = p.name || "";
+    _draftPurState.sku = p.code || "";
+    _draftPurState.category = p.category || "Kurti";
+    _draftPurState.sizes = p.variant || "M, L, XL";
+    _draftPurState.colors = p.color || "As Shown";
+    _draftPurState.unitCost = p.cost || "";
+    _draftPurState.sellingPrice = p.price || "";
+  }
+  renderPurchaseModalDom();
+};
+
+window.refreshPurchaseVariantGrid = function() {
+  syncDraftPurFieldsFromDom();
+  renderPurchaseModalDom();
+};
+
+window.onPurVariantMatrixChanged = function(colName, szName, val) {
+  if (!_draftPurState) return;
+  const k = makeVariantKey(colName, szName);
+  _draftPurState.variantStock[k] = Math.max(0, Number(val) || 0);
+  recalcPurchaseQtyAndTotalInDom();
+};
+
+window.onPurUnitCostChanged = function(val) {
+  if (!_draftPurState) return;
+  _draftPurState.unitCost = val;
+  recalcPurchaseQtyAndTotalInDom();
+};
+
+function recalcPurchaseQtyAndTotalInDom() {
+  if (!_draftPurState) return;
+  const sizeCols = String(_draftPurState.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+  const colorRows = String(_draftPurState.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+  let sumQty = 0;
+  (colorRows.length ? colorRows : ["As Shown"]).forEach((cl) => {
+    (sizeCols.length ? sizeCols : ["Free Size"]).forEach((sz) => {
+      sumQty += Math.max(0, Number(_draftPurState.variantStock[makeVariantKey(cl, sz)]) || 0);
+    });
+  });
+  const badge = document.getElementById("purMatrixTotalBadge");
+  if (badge) badge.textContent = `${sumQty} pcs`;
+  const unitCost = Number(document.getElementById("purUnitCost")?.value ?? _draftPurState.unitCost) || 0;
+  if (unitCost > 0 && sumQty > 0) {
+    const calcTotal = Math.round(sumQty * unitCost * 100) / 100;
+    _draftPurState.totalAmount = calcTotal;
+    const amtEl = document.getElementById("purAmt");
+    if (amtEl) amtEl.value = calcTotal;
+  }
+}
+
+window.handlePurchaseProdPhotos = async function(fileList, defaultColor = "") {
+  if (!fileList || !fileList.length || !_draftPurState) return;
+  syncDraftPurFieldsFromDom();
+  for (const file of Array.from(fileList)) {
+    const dataUrl = await compressImageFile(file, 960, 0.85);
+    const pid = `pp_${_draftPurState.id}_${uid().slice(-4)}`;
+    _draftPurState.prodPhotos.push({ id: pid, data: dataUrl, color: defaultColor || "" });
+  }
+  renderPurchaseModalDom();
+  showToast(`Added outfit photo${defaultColor ? ` for ${defaultColor}` : ""} 📸`);
+};
+
+window.setPurProdPhotoColor = function(idx, colVal) {
+  if (_draftPurState && _draftPurState.prodPhotos[idx]) {
+    _draftPurState.prodPhotos[idx].color = colVal || "";
+  }
+};
+
+window.cropPurProdPhotoAtIndex = function(idx) {
+  if (!_draftPurState || !_draftPurState.prodPhotos[idx]) return;
+  syncDraftPurFieldsFromDom();
+  const ph = _draftPurState.prodPhotos[idx];
+  openCropRotateModal(ph.data, "portrait", (cropped) => {
+    _draftPurState.prodPhotos[idx].data = cropped;
+    renderPurchaseModalDom();
+  }, "✂️ Crop & Rotate Outfit Photo");
+};
+
+window.removePurProdPhotoAtIndex = function(idx) {
+  if (!_draftPurState) return;
+  syncDraftPurFieldsFromDom();
+  _draftPurState.prodPhotos.splice(idx, 1);
+  renderPurchaseModalDom();
+};
 
 function renderPurchaseModalDom() {
   if (!_draftPurState) return;
   const st = _draftPurState;
   const wallets = computeSisterCashWallets();
+  const sizeCols = String(st.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+  const colorRows = String(st.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+  const sList = sizeCols.length ? sizeCols : ["Free Size"];
+  const cList = colorRows.length ? colorRows : ["As Shown"];
+
+  let totalMatrixQty = 0;
+  cList.forEach((cl) => {
+    sList.forEach((sz) => {
+      totalMatrixQty += Math.max(0, Number(st.variantStock[makeVariantKey(cl, sz)]) || 0);
+    });
+  });
+
   const modalRoot = document.getElementById("modalRoot");
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>${st.isEdit ? "✏️ Edit Purchase Bill" : "📦 New Purchase Entry"}</h3>
+          <h3>${st.isEdit ? "✏️ Edit Purchase Entry" : "📦 New Purchase Entry"}</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
         </div>
 
@@ -4369,52 +5074,134 @@ function renderPurchaseModalDom() {
           <b>💰 Available Sales Cash:</b> Vaheeda: <b>${money(wallets.vaheeda.availableCash)}</b> · Balkees: <b>${money(wallets.balkees.availableCash)}</b>
         </div>
 
-        <div class="field-row">
-          <div class="field">
-            <label>Supplier / Wholesaler *</label>
-            <input id="purSupplier" value="${esc(st.supplier)}" placeholder="e.g. Surat Textile Hub">
-          </div>
-          <div class="field">
-            <label>Invoice / Bill No.</label>
-            <input id="purInvNo" value="${esc(st.invoiceNo)}" placeholder="e.g. INV-204">
-          </div>
-        </div>
-
-        <div class="field-row">
-          <div class="field">
-            <label>Items Description *</label>
-            <input id="purDesc" value="${esc(st.itemsSummary)}" placeholder="e.g. 20 pcs Festive Kurtis">
-          </div>
-          <div class="field">
-            <label>Restock Outfit (Optional)</label>
-            <select id="purProdId">
-              <option value="">— General Stock Bill —</option>
-              ${db.products.map((p) => `<option value="${p.id}" ${st.productId === p.id ? 'selected' : ''}>${esc(p.name)} (${p.qty} in stock)</option>`).join("")}
-            </select>
-          </div>
-        </div>
-
-        <div class="field-row">
-          <div class="field">
-            <label>Total Bill Amount (₹) *</label>
-            <input id="purAmt" type="number" inputmode="decimal" value="${st.totalAmount}" placeholder="0">
-          </div>
-          <div class="field">
-            <label>Quantity (pcs)</label>
-            <input id="purQty" type="number" inputmode="numeric" value="${st.qty}">
-          </div>
-        </div>
-
         <div class="field">
-          <label>💎 Purchase Funding Source (Next Purchase Option)</label>
-          <select id="purFundSrc">
-            <option value="available_cash" ${st.fundingSource === 'available_cash' ? 'selected' : ''}>💰 From Available Cash via Sales (Deducts from Sister's Cash Wallet)</option>
-            <option value="new_investment" ${st.fundingSource === 'new_investment' ? 'selected' : ''}>💎 New Investment — Out of Pocket (Adds to Sister's Capital)</option>
+          <label>Quick-Fill from Existing Outfit (or leave as New Outfit)</label>
+          <select id="purProdId" onchange="onPurSelectExistingProd(this.value)">
+            <option value="">✨ Create / Restock by Outfit Name Below</option>
+            ${db.products.map((p) => `<option value="${p.id}" ${st.productId === p.id ? 'selected' : ''}>${esc(p.name)} (${p.code ? p.code + ' · ' : ''}${p.qty} in stock)</option>`).join("")}
           </select>
         </div>
 
+        <!-- 1. Name & 2. SKU/Code -->
+        <div class="field-row">
+          <div class="field">
+            <label>1. Outfit Name *</label>
+            <input id="purProdName" value="${esc(st.productName)}" placeholder="e.g. Organza Handwork Kurti">
+          </div>
+          <div class="field">
+            <label>2. SKU / Code</label>
+            <input id="purSku" value="${esc(st.sku)}" placeholder="e.g. SIS-205">
+          </div>
+        </div>
+
+        <!-- 3. Category & 4. Size -->
+        <div class="field-row">
+          <div class="field">
+            <label>3. Category</label>
+            <select id="purCat">
+              ${(db.settings.categories || DEFAULT_SETTINGS.categories).map((c) => `<option value="${esc(c)}" ${st.category === c ? 'selected' : ''}>${esc(c)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>4. Sizes (comma separated)</label>
+            <input id="purSizes" value="${esc(st.sizes)}" placeholder="S, M, L, XL" onchange="refreshPurchaseVariantGrid()">
+          </div>
+        </div>
+
+        <!-- 5. Colours -->
         <div class="field">
-          <label>👭 Paid By Sister (Select Split to open popup for both sisters)</label>
+          <label>5. Colours (comma separated)</label>
+          <div style="display:flex;gap:6px;">
+            <input id="purColors" value="${esc(st.colors)}" placeholder="Emerald, Rose, Ivory" onchange="refreshPurchaseVariantGrid()" style="flex:1;">
+            <button type="button" class="btn btn-soft btn-sm" onclick="refreshPurchaseVariantGrid()">↻ Update Grid</button>
+          </div>
+        </div>
+
+        <!-- Colour-Specific Outfit Photo Upload during Purchase -->
+        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+          <label style="color:var(--accent);">📸 Colour-Specific Outfit Photos (${st.prodPhotos.length})</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+            <label class="btn btn-soft btn-sm">
+              📷 + General Photo
+              <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseProdPhotos(this.files, '')">
+            </label>
+            ${cList.map((cl) => `
+              <label class="btn btn-outline btn-sm" style="border-color:var(--accent);">
+                🎨 + ${esc(cl)} Photo
+                <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseProdPhotos(this.files, '${esc(cl)}')">
+              </label>
+            `).join("")}
+          </div>
+          ${st.prodPhotos.length > 0 ? `
+            <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;">
+              ${st.prodPhotos.map((ph, idx) => `
+                <div style="width:98px;flex-shrink:0;background:var(--card);border-radius:10px;padding:4px;border:1.5px solid var(--accent);">
+                  <div style="position:relative;width:100%;height:76px;border-radius:7px;overflow:hidden;">
+                    <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;">
+                    <button type="button" onclick="cropPurProdPhotoAtIndex(${idx})" style="position:absolute;bottom:2px;left:2px;background:rgba(200,95,131,0.9);color:#fff;font-size:9px;padding:1px 4px;border-radius:4px;">✂️</button>
+                    <button type="button" onclick="removePurProdPhotoAtIndex(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.9);color:#fff;width:16px;height:16px;border-radius:50%;font-size:9px;">✕</button>
+                  </div>
+                  <select style="margin-top:4px;padding:2px 4px;font-size:10px;border-radius:6px;" onchange="setPurProdPhotoColor(${idx}, this.value)">
+                    <option value="" ${!ph.color ? 'selected' : ''}>All Colours</option>
+                    ${cList.map((cl) => `<option value="${esc(cl)}" ${String(ph.color || '').toLowerCase() === cl.toLowerCase() ? 'selected' : ''}>🎨 ${esc(cl)}</option>`).join("")}
+                  </select>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+        </div>
+
+        <!-- 6. Quantity (Separated by Colours & Sizes) -->
+        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="margin:0;color:var(--accent);">6. Quantity (Separated by Colours & Sizes)</label>
+            <span class="pill green" id="purMatrixTotalBadge">${totalMatrixQty} pcs</span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:5px;border-bottom:1px solid var(--line);">Colour \\ Size</th>
+                  ${sList.map((sz) => `<th style="text-align:center;padding:5px;border-bottom:1px solid var(--line);">📏 ${esc(sz)}</th>`).join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${cList.map((cl) => `
+                  <tr>
+                    <td style="padding:5px;font-weight:800;border-bottom:1px solid var(--line);">🎨 ${esc(cl)}</td>
+                    ${sList.map((sz) => {
+                      const k = makeVariantKey(cl, sz);
+                      const v = Math.max(0, Number(st.variantStock[k]) || 0);
+                      return `
+                        <td style="padding:4px;text-align:center;border-bottom:1px solid var(--line);">
+                          <input type="number" min="0" inputmode="numeric" value="${v}"
+                            style="width:54px;padding:5px;text-align:center;font-weight:800;"
+                            oninput="onPurVariantMatrixChanged('${esc(cl)}', '${esc(sz)}', this.value)">
+                        </td>
+                      `;
+                    }).join("")}
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 7. Cost & 8. Selling Price -->
+        <div class="field-row">
+          <div class="field">
+            <label>7. Unit Cost Price (₹) *</label>
+            <input id="purUnitCost" type="number" inputmode="decimal" value="${st.unitCost}" placeholder="0" oninput="onPurUnitCostChanged(this.value)">
+          </div>
+          <div class="field">
+            <label>8. Selling Price (₹) *</label>
+            <input id="purSellPrice" type="number" inputmode="decimal" value="${st.sellingPrice}" placeholder="0">
+          </div>
+        </div>
+
+        <!-- 9. Owner / Paid By (Vaheeda / Balkees / Split) -->
+        <div class="field">
+          <label>9. Owner / Paid By (Vaheeda / Balkees / Split)</label>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
             <button type="button" class="btn btn-sm ${st.paidBy === 'vaheeda' ? 'btn-primary' : 'btn-outline'}" onclick="selectPurchasePaidBy('vaheeda')">🌷 Vaheeda</button>
             <button type="button" class="btn btn-sm ${st.paidBy === 'balkees' ? 'btn-primary' : 'btn-outline'}" onclick="selectPurchasePaidBy('balkees')">🌸 Balkees</button>
@@ -4428,16 +5215,41 @@ function renderPurchaseModalDom() {
           ` : ""}
         </div>
 
+        <div class="field-row">
+          <div class="field">
+            <label>Total Purchase Bill (₹) *</label>
+            <input id="purAmt" type="number" inputmode="decimal" value="${st.totalAmount}" placeholder="Auto-calculated or enter bill">
+          </div>
+          <div class="field">
+            <label>💎 Funding Source</label>
+            <select id="purFundSrc">
+              <option value="available_cash" ${st.fundingSource === 'available_cash' ? 'selected' : ''}>💰 Sales Cash Wallet</option>
+              <option value="new_investment" ${st.fundingSource === 'new_investment' ? 'selected' : ''}>💎 New Investment</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Supplier / Wholesaler</label>
+            <input id="purSupplier" value="${esc(st.supplier)}" placeholder="e.g. Surat Textile Hub">
+          </div>
+          <div class="field">
+            <label>Invoice / Bill No.</label>
+            <input id="purInvNo" value="${esc(st.invoiceNo)}" placeholder="e.g. INV-204">
+          </div>
+        </div>
+
         <!-- Invoice Upload -->
         <div class="field">
           <label>🧾 Upload Supplier Invoice / Bill Photos (${st.invoices.length})</label>
           <div style="display:flex;gap:8px;overflow-x:auto;align-items:center;padding-bottom:4px;">
-            <label class="btn btn-soft btn-sm" style="height:68px;min-width:90px;flex-direction:column;">
+            <label class="btn btn-soft btn-sm" style="height:64px;min-width:88px;flex-direction:column;">
               <span>📸 Upload Bill</span>
               <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseInvoiceFiles(this.files)">
             </label>
             ${st.invoices.map((inv, idx) => `
-              <div style="position:relative;width:68px;height:68px;border-radius:10px;overflow:hidden;border:1.5px solid var(--accent);flex-shrink:0;">
+              <div style="position:relative;width:64px;height:64px;border-radius:10px;overflow:hidden;border:1.5px solid var(--accent);flex-shrink:0;">
                 <img src="${inv.data}" style="width:100%;height:100%;object-fit:cover;" onclick="openLightbox(['${inv.data}'], 0)">
                 <button type="button" onclick="cropPurchaseInvoiceAtIndex(${idx})" style="position:absolute;bottom:2px;left:2px;background:rgba(200,95,131,0.9);color:#fff;font-size:9px;padding:1px 4px;border-radius:4px;">✂️</button>
                 <button type="button" onclick="removePurchaseInvoiceAtIndex(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.9);color:#fff;width:16px;height:16px;border-radius:50%;font-size:9px;">✕</button>
@@ -4459,7 +5271,7 @@ function renderPurchaseModalDom() {
           </div>
         </div>
 
-        <button class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="savePurchaseFromModal()">💾 Save Purchase Entry</button>
+        <button class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="savePurchaseFromModal()">💾 Save Purchase & Sync Stock</button>
       </div>
     </div>
   `;
@@ -4522,13 +5334,42 @@ window.savePurchaseFromModal = async function() {
   syncDraftPurFieldsFromDom();
   const st = _draftPurState;
   if (!st) return;
-  const totalAmount = Number(st.totalAmount) || 0;
-  if (totalAmount <= 0) return showToast("Please enter total purchase bill amount");
+  const prodName = (st.productName || "").trim();
+  if (!prodName) return showToast("Please enter 1. Outfit Name");
+
+  const sizeCols = String(st.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+  const colorRows = String(st.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+  const sList = sizeCols.length ? sizeCols : ["Free Size"];
+  const cList = colorRows.length ? colorRows : ["As Shown"];
+
+  const cleanPurMatrix = {};
+  let totalPurchasedQty = 0;
+  cList.forEach((cl) => {
+    sList.forEach((sz) => {
+      const k = makeVariantKey(cl, sz);
+      const q = Math.max(0, Number(st.variantStock[k]) || 0);
+      cleanPurMatrix[k] = q;
+      totalPurchasedQty += q;
+    });
+  });
+  if (totalPurchasedQty <= 0) totalPurchasedQty = 1;
+
+  const unitCost = Math.max(0, Number(st.unitCost) || 0);
+  const sellingPrice = Math.max(0, Number(st.sellingPrice) || 0);
+  const totalAmount = Math.max(0, Number(st.totalAmount) || (unitCost * totalPurchasedQty));
+  if (totalAmount <= 0) return showToast("Please enter Unit Cost or Total Purchase Bill Amount");
 
   const now = Date.now();
   const invoicePhotoIds = st.invoices.map((x) => x.id);
   for (const inv of st.invoices) {
     await putLocalImage(inv.id, inv.data, now, false);
+  }
+
+  const purPhotoIds = st.prodPhotos.map((x) => x.id);
+  const purPhotoColorMap = {};
+  for (const ph of st.prodPhotos) {
+    await putLocalImage(ph.id, ph.data, now, false);
+    if (ph.color) purPhotoColorMap[ph.id] = ph.color;
   }
 
   let vPaid = 0, bPaid = 0;
@@ -4541,11 +5382,67 @@ window.savePurchaseFromModal = async function() {
     vPaid = totalAmount;
   }
 
-  const linkedProd = st.productId ? db.products.find((p) => p.id === st.productId) : null;
-  if (!st.isEdit && linkedProd && st.qty > 0) {
-    linkedProd.qty = (Number(linkedProd.qty) || 0) + st.qty;
-    linkedProd._u = now;
-    outbox.add(`products/${linkedProd.id}`);
+  // Create or update Product in db.products
+  let targetProd = st.productId
+    ? db.products.find((p) => p.id === st.productId)
+    : db.products.find((p) => (st.sku && p.code && p.code.toLowerCase() === st.sku.toLowerCase()) || p.name.toLowerCase() === prodName.toLowerCase());
+
+  if (targetProd) {
+    if (!st.isEdit) {
+      const mergedMatrix = { ...(targetProd.variantStock || {}) };
+      Object.entries(cleanPurMatrix).forEach(([k, q]) => {
+        mergedMatrix[k] = Math.max(0, (Number(mergedMatrix[k]) || 0) + q);
+      });
+      targetProd.variantStock = mergedMatrix;
+      targetProd.qty = Object.values(mergedMatrix).reduce((a, v) => a + (Number(v) || 0), 0);
+    }
+    if (st.sku) targetProd.code = st.sku;
+    if (st.category) targetProd.category = st.category;
+    if (st.sizes) targetProd.variant = st.sizes;
+    if (st.colors) targetProd.color = st.colors;
+    if (unitCost > 0) targetProd.cost = unitCost;
+    if (sellingPrice > 0) targetProd.price = sellingPrice;
+    targetProd.owner = st.paidBy;
+    if (purPhotoIds.length > 0) {
+      const existingIds = Array.isArray(targetProd.photoIds) ? targetProd.photoIds : [];
+      targetProd.photoIds = [...new Set([...existingIds, ...purPhotoIds])];
+      targetProd.photoColorMap = { ...(targetProd.photoColorMap || {}), ...purPhotoColorMap };
+      targetProd.imgAt = now;
+    }
+    targetProd.updatedAt = nowIso();
+    targetProd._u = now;
+    outbox.add(`products/${targetProd.id}`);
+  } else {
+    const newProdId = uid();
+    if (purPhotoIds.length > 0 && st.prodPhotos[0]) {
+      await putLocalImage(newProdId, st.prodPhotos[0].data, now, false);
+      if (st.prodPhotos[0].color) purPhotoColorMap[newProdId] = st.prodPhotos[0].color;
+      purPhotoIds[0] = newProdId;
+    }
+    targetProd = {
+      id: newProdId,
+      name: prodName,
+      code: (st.sku || "").trim(),
+      category: st.category || "Kurti",
+      variant: st.sizes || "Free Size",
+      color: st.colors || "As Shown",
+      cost: unitCost || Math.round((totalAmount / totalPurchasedQty) * 100) / 100,
+      price: sellingPrice || unitCost,
+      qty: totalPurchasedQty,
+      low: 2,
+      owner: st.paidBy || "vaheeda",
+      archived: false,
+      variantStock: cleanPurMatrix,
+      photoColorMap: purPhotoColorMap,
+      notes: "",
+      imgAt: purPhotoIds.length ? now : 0,
+      photoIds: purPhotoIds,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      _u: now
+    };
+    db.products.unshift(targetProd);
+    outbox.add(`products/${targetProd.id}`);
   }
 
   const existing = (db.purchases || []).find((x) => x.id === st.id);
@@ -4553,11 +5450,19 @@ window.savePurchaseFromModal = async function() {
     id: st.id,
     supplier: (st.supplier || "").trim() || "Wholesale Supplier",
     invoiceNo: (st.invoiceNo || "").trim(),
-    productId: st.productId || "",
-    productName: linkedProd ? linkedProd.name : (st.itemsSummary || "Stock Purchase"),
-    itemsSummary: (st.itemsSummary || "").trim() || (linkedProd ? linkedProd.name : "Stock Purchase"),
-    qty: Math.max(1, Number(st.qty) || 1),
-    unitCost: Math.round((totalAmount / Math.max(1, Number(st.qty) || 1)) * 100) / 100,
+    productId: targetProd.id,
+    productName: prodName,
+    sku: (st.sku || "").trim(),
+    category: st.category || "Kurti",
+    sizes: st.sizes || "",
+    colors: st.colors || "",
+    variantStock: cleanPurMatrix,
+    photoIds: purPhotoIds,
+    photoColorMap: purPhotoColorMap,
+    itemsSummary: `${prodName}${st.sku ? " (" + st.sku + ")" : ""}`,
+    qty: totalPurchasedQty,
+    unitCost: unitCost || Math.round((totalAmount / totalPurchasedQty) * 100) / 100,
+    sellingPrice,
     totalAmount,
     paidBy: st.paidBy,
     vaheedaPaid: vPaid,
@@ -4584,7 +5489,7 @@ window.savePurchaseFromModal = async function() {
   closeModal();
   renderApp();
   pushOutboxToFirebase();
-  showToast("Purchase bill saved & synced 📦");
+  showToast("Purchase & outfit stock saved 📦✨");
 };
 
 // ---- Purchase Return Modal with Cash Flow Options ----
