@@ -2741,14 +2741,37 @@ window.setStockQuery = (v) => { stockQuery = v; renderApp(); };
 window.setStockCat = (c) => { stockCategory = c; renderApp(); };
 window.setStockArchFilter = (f) => { stockArchFilter = f; renderApp(); };
 
-// ---- Purchases Tab (Purchase Entry, Split Payment, Invoice Upload, Funding Source, Purchase Return) ----
+// ---- Purchases Tab (Multi-Dress Purchase Entry, Same-Code Consolidation, Split Payment, Invoice Upload, Funding Source, Purchase Return) ----
+function getEffectivePurchaseItems(pur) {
+  if (Array.isArray(pur.items) && pur.items.length > 0) {
+    return pur.items;
+  }
+  return [{
+    id: pur.id + "_0",
+    productId: pur.productId || "",
+    productName: pur.productName || pur.itemsSummary || pur.title || "Stock Purchase",
+    sku: pur.sku || "",
+    category: pur.category || "Kurti",
+    sizes: pur.sizes || "",
+    colors: pur.colors || "",
+    variantStock: pur.variantStock || {},
+    photoIds: pur.photoIds || [],
+    photoColorMap: pur.photoColorMap || {},
+    qty: Number(pur.qty) || 1,
+    unitCost: Number(pur.unitCost) || 0,
+    sellingPrice: Number(pur.sellingPrice) || 0
+  }];
+}
+
 function renderPurchasesTab() {
   const t = computeTotals();
   const hidePriv = db.settings.privacy;
   const list = db.purchases || [];
   const filtered = list.filter((pur) => {
     const q = purchasesQuery.trim().toLowerCase();
-    const matchQ = !q || [pur.supplier, pur.invoiceNo, pur.itemsSummary, pur.productName, pur.notes].some((v) => String(v || "").toLowerCase().includes(q));
+    const effItems = getEffectivePurchaseItems(pur);
+    const itemsText = effItems.map((it) => `${it.productName || ""} ${it.sku || ""} ${it.sizes || ""} ${it.colors || ""} ${it.category || ""}`).join(" ");
+    const matchQ = !q || [pur.supplier, pur.invoiceNo, pur.itemsSummary, pur.productName, pur.title, pur.sku, pur.notes, itemsText].some((v) => String(v || "").toLowerCase().includes(q));
     const matchF = purchasesFilter === "all"
       || (purchasesFilter === "available_cash" && (pur.fundingSource || "available_cash") === "available_cash")
       || (purchasesFilter === "new_investment" && pur.fundingSource === "new_investment")
@@ -2773,7 +2796,7 @@ function renderPurchasesTab() {
     </div>
 
     <div style="display:flex;gap:8px;align-items:center;">
-      <input type="search" placeholder="🔍 Search supplier, invoice #, outfit…" value="${esc(purchasesQuery)}" oninput="window.setPurchasesQuery(this.value)">
+      <input type="search" placeholder="🔍 Search supplier, invoice #, SKU code, dress…" value="${esc(purchasesQuery)}" oninput="window.setPurchasesQuery(this.value)">
       <button class="btn btn-primary" style="flex-shrink:0;" onclick="openPurchaseModal()">＋ New Purchase</button>
     </div>
 
@@ -2790,24 +2813,49 @@ function renderPurchasesTab() {
       <div class="card" style="text-align:center;padding:26px;">
         <div style="font-size:36px;">📦</div>
         <h3 style="margin:6px 0 4px;">No purchase bills recorded yet</h3>
-        <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px;">Record stock purchases with invoice photos, sister split payments, funding source (Sales Cash vs New Investment), and purchase returns.</p>
+        <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px;">Record multi-dress purchase invoices, auto-calculate counts by colours & sizes, merge same-code items, split payments, and upload invoices.</p>
         <button class="btn btn-primary" onclick="openPurchaseModal()">＋ Record First Purchase</button>
       </div>
     ` : filtered.map((pur) => {
+      const effItems = getEffectivePurchaseItems(pur);
       const invIds = Array.isArray(pur.invoicePhotoIds) ? pur.invoicePhotoIds : [];
       const retTotal = (pur.returns || []).reduce((a, r) => a + (Number(r.returnAmount) || 0), 0);
-      const netAmt = Math.max(0, (Number(pur.totalAmount) || 0) - retTotal);
+      const billAmt = Number(pur.totalAmount ?? pur.amount) || 0;
+      const netAmt = Math.max(0, billAmt - retTotal);
       const paidByLabel = pur.paidBy === "split"
         ? `Split (Vaheeda: ${money(pur.vaheedaPaid)} · Balkees: ${money(pur.balkeesPaid)})`
         : (pur.paidBy === "balkees" ? "🌸 Balkees" : "🌷 Vaheeda");
       const fundLabel = pur.fundingSource === "new_investment" ? "💎 New Investment (Out of Pocket)" : "💰 Available Cash via Sales";
+      const totalPcs = effItems.reduce((a, it) => a + (Number(it.qty) || 0), 0) || Number(pur.qty) || 1;
 
       return `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
             <div style="flex:1;">
-              <div style="font-weight:800;font-size:15px;">📦 ${esc(pur.itemsSummary || pur.productName || "Stock Purchase")} ${pur.qty ? `× ${pur.qty}` : ""}</div>
-              <div style="font-size:12px;color:var(--muted);margin-top:2px;">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <span style="font-weight:800;font-size:15px;">📦 ${esc(pur.itemsSummary || pur.title || pur.productName || "Purchase Invoice")} (${totalPcs} pcs)</span>
+                ${effItems.length > 1 ? `<span class="pill green">👗 ${effItems.length} Dresses</span>` : ""}
+              </div>
+              <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">
+                ${effItems.map((it, idx) => {
+                  const vStock = (it.variantStock && typeof it.variantStock === "object") ? it.variantStock : {};
+                  const breakdown = Object.entries(vStock)
+                    .filter(([, q]) => Number(q) > 0)
+                    .map(([k, q]) => {
+                      const [col, sz] = k.split("|");
+                      return `${q} ${col || ""} ${sz || ""}`.trim();
+                    })
+                    .join(" + ");
+                  const itemQty = Object.values(vStock).reduce((a, v) => a + (Number(v) || 0), 0) || Number(it.qty) || 1;
+                  return `
+                    <div style="font-size:12px;background:var(--bg);padding:6px 8px;border-radius:8px;border:1px solid var(--line);">
+                      <div><b>• ${esc(it.productName || `Dress #${idx + 1}`)}</b> ${it.sku ? `<span class="pill" style="padding:1px 6px;font-size:10px;">#${esc(it.sku)}</span>` : ""} — <b>${itemQty} pcs</b>${Number(it.unitCost) > 0 ? ` · Cost ${money(it.unitCost)}` : ""}${Number(it.sellingPrice) > 0 ? ` · Sell ${money(it.sellingPrice)}` : ""}</div>
+                      ${breakdown ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">🧮 ${esc(breakdown)} = <b>${itemQty} pcs</b></div>` : ""}
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-top:6px;">
                 ${esc(pur.date)} · Supplier: <b>${esc(pur.supplier || "Vendor")}</b> ${pur.invoiceNo ? `· Inv #<b>${esc(pur.invoiceNo)}</b>` : ""}
               </div>
               <div class="pill-row" style="margin-top:6px;">
@@ -2827,7 +2875,7 @@ function renderPurchasesTab() {
               <b>↩️ Purchase Returns (${pur.returns.length}):</b>
               ${pur.returns.map((r) => `
                 <div style="margin-top:3px;">
-                  • ${esc(r.date)}: Qty ${r.qty} · <b>${money(r.returnAmount)}</b> (${esc(r.cashFlowMode?.replace(/_/g, " ") || "refund")}) ${r.reason ? `— ${esc(r.reason)}` : ""}
+                  • ${esc(r.date)}: Qty ${r.qty} · <b>${money(r.returnAmount ?? r.amount)}</b> (${esc(r.cashFlowMode?.replace(/_/g, " ") || "refund")}) ${r.reason ? `— ${esc(r.reason)}` : ""}
                 </div>
               `).join("")}
             </div>
@@ -4502,13 +4550,48 @@ window.removeDraftPhoto = function(idx) {
   renderProductModalDom(readCurrentProductDraftForm());
 };
 
+function mergeCsvTokensJs(...csvs) {
+  const seen = new Set();
+  const out = [];
+  for (const csv of csvs) {
+    for (const raw of String(csv || "").split(",")) {
+      const tok = raw.trim();
+      if (tok && !seen.has(tok.toLowerCase())) {
+        seen.add(tok.toLowerCase());
+        out.push(tok);
+      }
+    }
+  }
+  return out.join(", ");
+}
+
+function mergeVariantStockMapsJs(a, b) {
+  const out = {};
+  for (const [k, v] of Object.entries(a || {})) {
+    const q = Math.max(0, Number(v) || 0);
+    if (q > 0) out[k] = q;
+  }
+  for (const [k, v] of Object.entries(b || {})) {
+    const q = Math.max(0, Number(v) || 0);
+    const next = (out[k] || 0) + q;
+    if (next > 0) out[k] = next;
+  }
+  return out;
+}
+
 window.saveProductFromModal = async function() {
   const name = (document.getElementById("pName")?.value || "").trim();
   if (!name) return showToast("Please enter an outfit name");
   const now = Date.now();
   const id = window._draftProdBaseId;
+  const codeStr = (document.getElementById("pCode")?.value || "").trim();
 
-  if (draftPhotos.length > 0 && draftPhotos[0].id !== id) {
+  const existingById = db.products.find((x) => x.id === id);
+  const existingByCode = (!existingById && codeStr)
+    ? db.products.find((x) => String(x.code || "").trim().toLowerCase() === codeStr.toLowerCase())
+    : null;
+
+  if (draftPhotos.length > 0 && !existingByCode && draftPhotos[0].id !== id) {
     draftPhotos[0].id = id;
   }
   const photoIds = draftPhotos.map((x) => x.id);
@@ -4529,45 +4612,71 @@ window.saveProductFromModal = async function() {
     (sizes.length ? sizes : ["Free Size"]).forEach((sz) => {
       const k = makeVariantKey(cl, sz);
       const v = Math.max(0, Number(_draftProdVariantStock[k]) || 0);
-      cleanVariantStock[k] = v;
+      if (v > 0) cleanVariantStock[k] = v;
       totalQty += v;
     });
   });
 
-  const item = {
-    id,
-    name,
-    code: (document.getElementById("pCode")?.value || "").trim(),
-    category: document.getElementById("pCat")?.value || "Kurti",
-    variant: variantStr,
-    color: colorStr,
-    cost: Number(document.getElementById("pCost")?.value) || 0,
-    price: Number(document.getElementById("pPrice")?.value) || 0,
-    qty: totalQty,
-    low: 2,
-    owner: document.getElementById("pOwner")?.value || "vaheeda",
-    archived: Boolean(document.getElementById("pArchived")?.checked),
-    variantStock: cleanVariantStock,
-    photoColorMap,
-    notes: "",
-    imgAt: photoIds.length ? now : 0,
-    photoIds,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-    _u: now
-  };
+  const parsedCost = Number(document.getElementById("pCost")?.value) || 0;
+  const parsedPrice = Number(document.getElementById("pPrice")?.value) || 0;
 
-  const idx = db.products.findIndex((x) => x.id === id);
-  if (idx >= 0) db.products[idx] = item;
-  else db.products.unshift(item);
+  let targetId = id;
+  if (existingByCode && !existingById) {
+    // Same SKU/code entered as a new product -> consolidate into the existing product for that code
+    const mergedSizes = mergeCsvTokensJs(existingByCode.variant, variantStr) || existingByCode.variant;
+    const mergedColors = mergeCsvTokensJs(existingByCode.color, colorStr) || existingByCode.color;
+    const mergedMatrix = mergeVariantStockMapsJs(existingByCode.variantStock, cleanVariantStock);
+    const mergedQty = Object.values(mergedMatrix).reduce((a, v) => a + (Number(v) || 0), 0) || ((Number(existingByCode.qty) || 0) + totalQty);
+    const mergedPhotos = [...new Set([...(existingByCode.photoIds || []), ...photoIds])];
+    existingByCode.name = name || existingByCode.name;
+    existingByCode.category = document.getElementById("pCat")?.value || existingByCode.category;
+    existingByCode.variant = mergedSizes;
+    existingByCode.color = mergedColors;
+    if (parsedCost > 0) existingByCode.cost = parsedCost;
+    if (parsedPrice > 0) existingByCode.price = parsedPrice;
+    existingByCode.qty = mergedQty;
+    existingByCode.variantStock = mergedMatrix;
+    existingByCode.photoIds = mergedPhotos;
+    existingByCode.photoColorMap = { ...(existingByCode.photoColorMap || {}), ...photoColorMap };
+    if (mergedPhotos.length) existingByCode.imgAt = now;
+    existingByCode.updatedAt = nowIso();
+    existingByCode._u = now;
+    targetId = existingByCode.id;
+  } else {
+    const item = {
+      id,
+      name,
+      code: codeStr,
+      category: document.getElementById("pCat")?.value || "Kurti",
+      variant: variantStr,
+      color: colorStr,
+      cost: parsedCost,
+      price: parsedPrice,
+      qty: totalQty,
+      low: 2,
+      owner: document.getElementById("pOwner")?.value || "vaheeda",
+      archived: Boolean(document.getElementById("pArchived")?.checked),
+      variantStock: cleanVariantStock,
+      photoColorMap,
+      notes: "",
+      imgAt: photoIds.length ? now : 0,
+      photoIds,
+      createdAt: existingById?.createdAt || nowIso(),
+      updatedAt: nowIso(),
+      _u: now
+    };
+    const idx = db.products.findIndex((x) => x.id === id);
+    if (idx >= 0) db.products[idx] = item;
+    else db.products.unshift(item);
+  }
 
   saveLocalDb();
-  outbox.add(`products/${id}`);
+  outbox.add(`products/${targetId}`);
   saveOutbox();
   closeModal();
   renderApp();
   pushOutboxToFirebase();
-  showToast("Outfit & colour-size stock saved ✨");
+  showToast(existingByCode && !existingById ? `Merged into code #${codeStr} ✨` : "Outfit & selling price saved ✨");
 };
 
 // ---- Delete Approval Workflow (Admin Approval or Admin PIN Required) ----
@@ -4908,12 +5017,95 @@ window.executeCustomerShare = async function(prodId, shareId, tempUrl) {
 };
 
 // ============================================================================
-// Purchase Entry Modal:
-// Exact Requested Flow:
-// Name ---> SKU/Code ---> Category ---> Size ---> Colours (+ Colour-Specific Photos)
-// ---> Quantity (separated by Colours & Sizes) ---> Cost ---> Selling Price ---> Owner (Vaheeda / Balkees / Split)
+// Multi-Dress Purchase Invoice Modal:
+// - Supports MULTIPLE dresses in a single purchase invoice (+ Add Another Dress)
+// - Same SKU/Code items are consolidated as ONE item (auto-calculates total count
+//   by adding quantities across all sizes & colours, e.g., 2 Blue M + 5 Green L + 3 Red M + 2 Red L = 12)
+// - Unique Cost & Selling Price per code on purchase (Selling Price can be changed
+//   individually later in Stock -> Edit anytime)
 // ============================================================================
 let _draftPurState = null;
+
+function calcDraftDressItemQtyAndMatrix(dItem) {
+  const sizeCols = String(dItem.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
+  const colorRows = String(dItem.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
+  const sList = sizeCols.length ? sizeCols : ["Free Size"];
+  const cList = colorRows.length ? colorRows : ["As Shown"];
+  const activeMatrix = {};
+  const breakdownParts = [];
+  let sumQty = 0;
+  cList.forEach((cl) => {
+    sList.forEach((sz) => {
+      const k = makeVariantKey(cl, sz);
+      const q = Math.max(0, Number((dItem.variantStock || {})[k]) || 0);
+      if (q > 0) {
+        activeMatrix[k] = q;
+        breakdownParts.push(`${q} ${cl} ${sz}`);
+        sumQty += q;
+      }
+    });
+  });
+  return {
+    sList,
+    cList,
+    activeMatrix,
+    sumQty,
+    breakdownText: breakdownParts.length ? `${breakdownParts.join(" + ")} = ${sumQty} pcs` : ""
+  };
+}
+
+function consolidateDraftPurchaseItemsByCodeJs(items) {
+  const byCode = new Map();
+  const result = [];
+  for (const raw of (items || [])) {
+    const codeKey = String(raw.sku || "").trim().toUpperCase();
+    const { activeMatrix, sumQty } = calcDraftDressItemQtyAndMatrix(raw);
+    const normItem = {
+      ...raw,
+      sku: String(raw.sku || "").trim(),
+      variantStock: activeMatrix,
+      qty: sumQty
+    };
+    if (!codeKey) {
+      result.push(normItem);
+      continue;
+    }
+    const existingIdx = byCode.get(codeKey);
+    if (existingIdx === undefined) {
+      byCode.set(codeKey, result.length);
+      result.push(normItem);
+    } else {
+      const prev = result[existingIdx];
+      const mergedSizes = mergeCsvTokensJs(prev.sizes, normItem.sizes);
+      const mergedColors = mergeCsvTokensJs(prev.colors, normItem.colors);
+      const mergedStock = mergeVariantStockMapsJs(prev.variantStock, normItem.variantStock);
+      const mergedQty = Object.values(mergedStock).reduce((a, v) => a + (Number(v) || 0), 0);
+      const seenPhotoIds = new Set();
+      const mergedPhotos = [];
+      for (const ph of [...(prev.prodPhotos || []), ...(normItem.prodPhotos || [])]) {
+        if (ph && ph.id && !seenPhotoIds.has(ph.id)) {
+          seenPhotoIds.add(ph.id);
+          mergedPhotos.push(ph);
+        }
+      }
+      result[existingIdx] = {
+        ...prev,
+        productId: prev.productId || normItem.productId,
+        productName: prev.productName || normItem.productName,
+        category: normItem.category || prev.category,
+        sizes: mergedSizes,
+        colors: mergedColors,
+        variantStock: mergedStock,
+        qty: mergedQty,
+        unitCost: Number(normItem.unitCost) > 0 ? normItem.unitCost : prev.unitCost,
+        sellingPrice: Number(normItem.sellingPrice) > 0 ? normItem.sellingPrice : prev.sellingPrice,
+        prodPhotos: mergedPhotos,
+        isExpanded: true
+      };
+    }
+  }
+  return result;
+}
 
 window.openPurchaseModal = function(purId = null) {
   const existing = purId ? (db.purchases || []).find((x) => x.id === purId) : null;
@@ -4925,42 +5117,65 @@ window.openPurchaseModal = function(purId = null) {
       if (im && im.data) invoices.push({ id: iid, data: im.data });
     });
   }
-  const prodPhotos = [];
-  if (existing && Array.isArray(existing.photoIds)) {
-    const pMap = (existing.photoColorMap && typeof existing.photoColorMap === "object") ? existing.photoColorMap : {};
-    existing.photoIds.forEach((pid) => {
-      const im = imgMap.get(pid);
-      if (im && im.data) prodPhotos.push({ id: pid, data: im.data, color: pMap[pid] || "" });
+
+  let draftItems = [];
+  if (existing) {
+    const eff = getEffectivePurchaseItems(existing);
+    draftItems = eff.map((it, idx) => {
+      const pMap = (it.photoColorMap && typeof it.photoColorMap === "object") ? it.photoColorMap : (existing.photoColorMap || {});
+      const pIds = Array.isArray(it.photoIds) ? it.photoIds : [];
+      const itemPhotos = [];
+      pIds.forEach((pid) => {
+        const im = imgMap.get(pid);
+        if (im && im.data) itemPhotos.push({ id: pid, data: im.data, color: pMap[pid] || "" });
+      });
+      return {
+        id: it.id || uid(),
+        productId: it.productId || "",
+        productName: it.productName || "",
+        sku: it.sku || "",
+        category: it.category || "Kurti",
+        sizes: it.sizes || "M, L",
+        colors: it.colors || "Red, Green, Blue",
+        variantStock: (it.variantStock && typeof it.variantStock === "object") ? { ...it.variantStock } : {},
+        unitCost: it.unitCost || "",
+        sellingPrice: it.sellingPrice || "",
+        prodPhotos: itemPhotos,
+        isExpanded: idx === 0 || eff.length <= 2
+      };
     });
+  } else {
+    draftItems = [{
+      id: uid(),
+      productId: "",
+      productName: "",
+      sku: "",
+      category: (db.settings.categories && db.settings.categories[0]) || "Kurti",
+      sizes: "M, L",
+      colors: "Red, Green, Blue",
+      variantStock: {},
+      unitCost: "",
+      sellingPrice: "",
+      prodPhotos: [],
+      isExpanded: true
+    }];
   }
-  const initMatrix = (existing && existing.variantStock && typeof existing.variantStock === "object")
-    ? { ...existing.variantStock }
-    : { "Emerald|M": existing?.qty ?? 1 };
 
   _draftPurState = {
     isEdit: Boolean(existing),
     id: baseId,
-    productId: existing?.productId || "",
-    // 1. Name -> 2. SKU/Code -> 3. Category -> 4. Size -> 5. Colours -> 6. Quantity Matrix -> 7. Cost -> 8. Selling Price -> 9. Owner
-    productName: existing?.productName || existing?.itemsSummary || "",
-    sku: existing?.sku || "",
-    category: existing?.category || "Kurti",
-    sizes: existing?.sizes || "M, L, XL",
-    colors: existing?.colors || "Emerald, Rose",
-    variantStock: initMatrix,
-    unitCost: existing?.unitCost || "",
-    sellingPrice: existing?.sellingPrice || "",
+    items: draftItems,
     paidBy: existing?.paidBy || (currentAccount?.id === "balkees" ? "balkees" : "vaheeda"),
     vaheedaPaid: existing?.vaheedaPaid || 0,
     balkeesPaid: existing?.balkeesPaid || 0,
     supplier: existing?.supplier || "",
     invoiceNo: existing?.invoiceNo || "",
-    totalAmount: existing?.totalAmount || "",
+    totalAmount: existing?.totalAmount ?? existing?.amount ?? "",
+    amountManual: Boolean(existing),
     fundingSource: existing?.fundingSource || "available_cash",
     method: existing?.method || "UPI / GPay",
     date: existing?.date || todayIso(),
     notes: existing?.notes || "",
-    prodPhotos,
     invoices
   };
   renderPurchaseModalDom();
@@ -4968,13 +5183,16 @@ window.openPurchaseModal = function(purId = null) {
 
 function syncDraftPurFieldsFromDom() {
   if (!_draftPurState) return;
-  _draftPurState.productName = document.getElementById("purProdName")?.value ?? _draftPurState.productName;
-  _draftPurState.sku = document.getElementById("purSku")?.value ?? _draftPurState.sku;
-  _draftPurState.category = document.getElementById("purCat")?.value ?? _draftPurState.category;
-  _draftPurState.sizes = document.getElementById("purSizes")?.value ?? _draftPurState.sizes;
-  _draftPurState.colors = document.getElementById("purColors")?.value ?? _draftPurState.colors;
-  _draftPurState.unitCost = document.getElementById("purUnitCost")?.value ?? _draftPurState.unitCost;
-  _draftPurState.sellingPrice = document.getElementById("purSellPrice")?.value ?? _draftPurState.sellingPrice;
+  (_draftPurState.items || []).forEach((it, idx) => {
+    if (!it.isExpanded) return;
+    it.productName = document.getElementById(`purProdName_${idx}`)?.value ?? it.productName;
+    it.sku = document.getElementById(`purSku_${idx}`)?.value ?? it.sku;
+    it.category = document.getElementById(`purCat_${idx}`)?.value ?? it.category;
+    it.sizes = document.getElementById(`purSizes_${idx}`)?.value ?? it.sizes;
+    it.colors = document.getElementById(`purColors_${idx}`)?.value ?? it.colors;
+    it.unitCost = document.getElementById(`purUnitCost_${idx}`)?.value ?? it.unitCost;
+    it.sellingPrice = document.getElementById(`purSellPrice_${idx}`)?.value ?? it.sellingPrice;
+  });
   _draftPurState.supplier = document.getElementById("purSupplier")?.value ?? _draftPurState.supplier;
   _draftPurState.invoiceNo = document.getElementById("purInvNo")?.value ?? _draftPurState.invoiceNo;
   _draftPurState.totalAmount = document.getElementById("purAmt")?.value ?? _draftPurState.totalAmount;
@@ -4983,21 +5201,97 @@ function syncDraftPurFieldsFromDom() {
   _draftPurState.date = document.getElementById("purDate")?.value ?? _draftPurState.date;
 }
 
-window.onPurSelectExistingProd = function(prodId) {
+window.togglePurDressExpand = function(dIdx) {
+  syncDraftPurFieldsFromDom();
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
+  _draftPurState.items[dIdx].isExpanded = !_draftPurState.items[dIdx].isExpanded;
+  renderPurchaseModalDom();
+};
+
+window.addAnotherDressToPurchaseModal = function() {
   syncDraftPurFieldsFromDom();
   if (!_draftPurState) return;
-  _draftPurState.productId = prodId || "";
+  _draftPurState.items.forEach((it) => { it.isExpanded = false; });
+  _draftPurState.items.push({
+    id: uid(),
+    productId: "",
+    productName: "",
+    sku: "",
+    category: (db.settings.categories && db.settings.categories[0]) || "Kurti",
+    sizes: "M, L",
+    colors: "Red, Green, Blue",
+    variantStock: {},
+    unitCost: "",
+    sellingPrice: "",
+    prodPhotos: [],
+    isExpanded: true
+  });
+  renderPurchaseModalDom();
+};
+
+window.removeDressFromPurchaseModal = function(dIdx) {
+  syncDraftPurFieldsFromDom();
+  if (!_draftPurState || _draftPurState.items.length <= 1) return;
+  _draftPurState.items.splice(dIdx, 1);
+  recalcPurchaseQtyAndTotalInDom(true);
+  renderPurchaseModalDom();
+};
+
+window.mergeSameCodePurchaseDraftNow = function() {
+  syncDraftPurFieldsFromDom();
+  if (!_draftPurState) return;
+  const before = _draftPurState.items.length;
+  _draftPurState.items = consolidateDraftPurchaseItemsByCodeJs(_draftPurState.items);
+  recalcPurchaseQtyAndTotalInDom(true);
+  renderPurchaseModalDom();
+  if (_draftPurState.items.length < before) {
+    showToast("Same-code items merged into 1 item & quantities summed ✨");
+  }
+};
+
+window.onPurSelectExistingProd = function(dIdx, prodId) {
+  syncDraftPurFieldsFromDom();
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
+  const dItem = _draftPurState.items[dIdx];
+  dItem.productId = prodId || "";
   const p = db.products.find((x) => x.id === prodId);
   if (p) {
-    _draftPurState.productName = p.name || "";
-    _draftPurState.sku = p.code || "";
-    _draftPurState.category = p.category || "Kurti";
-    _draftPurState.sizes = p.variant || "M, L, XL";
-    _draftPurState.colors = p.color || "As Shown";
-    _draftPurState.unitCost = p.cost || "";
-    _draftPurState.sellingPrice = p.price || "";
+    dItem.productName = p.name || "";
+    dItem.sku = p.code || "";
+    dItem.category = p.category || "Kurti";
+    dItem.sizes = p.variant || "M, L";
+    dItem.colors = p.color || "Red, Green, Blue";
+    dItem.unitCost = p.cost || "";
+    dItem.sellingPrice = p.price || "";
   }
+  recalcPurchaseQtyAndTotalInDom(true);
   renderPurchaseModalDom();
+};
+
+window.onPurSkuChanged = function(dIdx, newSku) {
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
+  const dItem = _draftPurState.items[dIdx];
+  dItem.sku = newSku;
+  const trimmed = String(newSku || "").trim().toLowerCase();
+  if (!trimmed) return;
+  const otherDraft = _draftPurState.items.find((it, i) => i !== dIdx && String(it.sku || "").trim().toLowerCase() === trimmed);
+  const inStock = db.products.find((p) => String(p.code || "").trim().toLowerCase() === trimmed);
+  if (!dItem.productName && (otherDraft?.productName || inStock?.name)) {
+    dItem.productName = otherDraft?.productName || inStock?.name || "";
+    const nEl = document.getElementById(`purProdName_${dIdx}`);
+    if (nEl) nEl.value = dItem.productName;
+  }
+  if (!dItem.unitCost && (otherDraft?.unitCost || inStock?.cost)) {
+    dItem.unitCost = otherDraft?.unitCost || inStock?.cost || "";
+    const cEl = document.getElementById(`purUnitCost_${dIdx}`);
+    if (cEl) cEl.value = dItem.unitCost;
+  }
+  if (!dItem.sellingPrice && (otherDraft?.sellingPrice || inStock?.price)) {
+    dItem.sellingPrice = otherDraft?.sellingPrice || inStock?.price || "";
+    const sEl = document.getElementById(`purSellPrice_${dIdx}`);
+    if (sEl) sEl.value = dItem.sellingPrice;
+  }
+  if (inStock) dItem.productId = inStock.id;
 };
 
 window.refreshPurchaseVariantGrid = function() {
@@ -5005,72 +5299,115 @@ window.refreshPurchaseVariantGrid = function() {
   renderPurchaseModalDom();
 };
 
-window.onPurVariantMatrixChanged = function(colName, szName, val) {
-  if (!_draftPurState) return;
+window.onPurVariantMatrixChanged = function(dIdx, colName, szName, val) {
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
   const k = makeVariantKey(colName, szName);
-  _draftPurState.variantStock[k] = Math.max(0, Number(val) || 0);
+  const q = Math.max(0, Number(val) || 0);
+  if (q > 0) _draftPurState.items[dIdx].variantStock[k] = q;
+  else delete _draftPurState.items[dIdx].variantStock[k];
   recalcPurchaseQtyAndTotalInDom();
 };
 
-window.onPurUnitCostChanged = function(val) {
-  if (!_draftPurState) return;
-  _draftPurState.unitCost = val;
-  recalcPurchaseQtyAndTotalInDom();
-};
-
-function recalcPurchaseQtyAndTotalInDom() {
-  if (!_draftPurState) return;
-  const sizeCols = String(_draftPurState.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
-  const colorRows = String(_draftPurState.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
-  let sumQty = 0;
-  (colorRows.length ? colorRows : ["As Shown"]).forEach((cl) => {
-    (sizeCols.length ? sizeCols : ["Free Size"]).forEach((sz) => {
-      sumQty += Math.max(0, Number(_draftPurState.variantStock[makeVariantKey(cl, sz)]) || 0);
+window.onPurUnitCostChanged = function(dIdx, val) {
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
+  const dItem = _draftPurState.items[dIdx];
+  dItem.unitCost = val;
+  const codeKey = String(dItem.sku || "").trim().toLowerCase();
+  if (codeKey) {
+    _draftPurState.items.forEach((other, i) => {
+      if (i !== dIdx && String(other.sku || "").trim().toLowerCase() === codeKey) {
+        other.unitCost = val;
+        const el = document.getElementById(`purUnitCost_${i}`);
+        if (el) el.value = val;
+      }
     });
+  }
+  recalcPurchaseQtyAndTotalInDom();
+};
+
+window.onPurSellPriceChanged = function(dIdx, val) {
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
+  const dItem = _draftPurState.items[dIdx];
+  dItem.sellingPrice = val;
+  const codeKey = String(dItem.sku || "").trim().toLowerCase();
+  if (codeKey) {
+    _draftPurState.items.forEach((other, i) => {
+      if (i !== dIdx && String(other.sku || "").trim().toLowerCase() === codeKey) {
+        other.sellingPrice = val;
+        const el = document.getElementById(`purSellPrice_${i}`);
+        if (el) el.value = val;
+      }
+    });
+  }
+};
+
+function recalcPurchaseQtyAndTotalInDom(skipDomWrite = false) {
+  if (!_draftPurState) return;
+  let grandPcs = 0;
+  let grandCost = 0;
+  (_draftPurState.items || []).forEach((dItem, dIdx) => {
+    const { sumQty, breakdownText } = calcDraftDressItemQtyAndMatrix(dItem);
+    const uc = Number(document.getElementById(`purUnitCost_${dIdx}`)?.value ?? dItem.unitCost) || 0;
+    const lineCost = Math.round(sumQty * uc * 100) / 100;
+    grandPcs += sumQty;
+    grandCost += lineCost;
+    if (!skipDomWrite) {
+      const badge = document.getElementById(`purMatrixTotalBadge_${dIdx}`);
+      if (badge) badge.textContent = `Auto Count: ${sumQty} pcs`;
+      const fBox = document.getElementById(`purMatrixFormula_${dIdx}`);
+      if (fBox) fBox.textContent = breakdownText ? `🧮 ${breakdownText}` : "Enter quantities in the Colour × Size cells below";
+      const hdrSub = document.getElementById(`purDressHdrSub_${dIdx}`);
+      if (hdrSub) hdrSub.textContent = `Auto Count: ${sumQty} pcs · Line Cost: ${money(lineCost)}`;
+    }
   });
-  const badge = document.getElementById("purMatrixTotalBadge");
-  if (badge) badge.textContent = `${sumQty} pcs`;
-  const unitCost = Number(document.getElementById("purUnitCost")?.value ?? _draftPurState.unitCost) || 0;
-  if (unitCost > 0 && sumQty > 0) {
-    const calcTotal = Math.round(sumQty * unitCost * 100) / 100;
-    _draftPurState.totalAmount = calcTotal;
-    const amtEl = document.getElementById("purAmt");
-    if (amtEl) amtEl.value = calcTotal;
+  grandCost = Math.round(grandCost * 100) / 100;
+  if (grandCost > 0) {
+    _draftPurState.totalAmount = grandCost;
+    if (!skipDomWrite) {
+      const amtEl = document.getElementById("purAmt");
+      if (amtEl) amtEl.value = grandCost;
+    }
+  }
+  if (!skipDomWrite) {
+    const sumBanner = document.getElementById("purInvoiceTopSummary");
+    if (sumBanner) {
+      sumBanner.textContent = `${_draftPurState.items.length} Dress Entry(s) · Auto Total Count: ${grandPcs} pcs`;
+    }
   }
 }
 
-window.handlePurchaseProdPhotos = async function(fileList, defaultColor = "") {
-  if (!fileList || !fileList.length || !_draftPurState) return;
+window.handlePurchaseProdPhotos = async function(dIdx, fileList, defaultColor = "") {
+  if (!fileList || !fileList.length || !_draftPurState || !_draftPurState.items[dIdx]) return;
   syncDraftPurFieldsFromDom();
   for (const file of Array.from(fileList)) {
     const dataUrl = await compressImageFile(file, 960, 0.85);
-    const pid = `pp_${_draftPurState.id}_${uid().slice(-4)}`;
-    _draftPurState.prodPhotos.push({ id: pid, data: dataUrl, color: defaultColor || "" });
+    const pid = `pp_${_draftPurState.id}_d${dIdx}_${uid().slice(-4)}`;
+    _draftPurState.items[dIdx].prodPhotos.push({ id: pid, data: dataUrl, color: defaultColor || "" });
   }
   renderPurchaseModalDom();
   showToast(`Added outfit photo${defaultColor ? ` for ${defaultColor}` : ""} 📸`);
 };
 
-window.setPurProdPhotoColor = function(idx, colVal) {
-  if (_draftPurState && _draftPurState.prodPhotos[idx]) {
-    _draftPurState.prodPhotos[idx].color = colVal || "";
+window.setPurProdPhotoColor = function(dIdx, pIdx, colVal) {
+  if (_draftPurState && _draftPurState.items[dIdx]?.prodPhotos[pIdx]) {
+    _draftPurState.items[dIdx].prodPhotos[pIdx].color = colVal || "";
   }
 };
 
-window.cropPurProdPhotoAtIndex = function(idx) {
-  if (!_draftPurState || !_draftPurState.prodPhotos[idx]) return;
+window.cropPurProdPhotoAtIndex = function(dIdx, pIdx) {
+  if (!_draftPurState || !_draftPurState.items[dIdx]?.prodPhotos[pIdx]) return;
   syncDraftPurFieldsFromDom();
-  const ph = _draftPurState.prodPhotos[idx];
+  const ph = _draftPurState.items[dIdx].prodPhotos[pIdx];
   openCropRotateModal(ph.data, "portrait", (cropped) => {
-    _draftPurState.prodPhotos[idx].data = cropped;
+    _draftPurState.items[dIdx].prodPhotos[pIdx].data = cropped;
     renderPurchaseModalDom();
   }, "✂️ Crop & Rotate Outfit Photo");
 };
 
-window.removePurProdPhotoAtIndex = function(idx) {
-  if (!_draftPurState) return;
+window.removePurProdPhotoAtIndex = function(dIdx, pIdx) {
+  if (!_draftPurState || !_draftPurState.items[dIdx]) return;
   syncDraftPurFieldsFromDom();
-  _draftPurState.prodPhotos.splice(idx, 1);
+  _draftPurState.items[dIdx].prodPhotos.splice(pIdx, 1);
   renderPurchaseModalDom();
 };
 
@@ -5078,155 +5415,220 @@ function renderPurchaseModalDom() {
   if (!_draftPurState) return;
   const st = _draftPurState;
   const wallets = computeSisterCashWallets();
-  const sizeCols = String(st.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
-  const colorRows = String(st.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
-  const sList = sizeCols.length ? sizeCols : ["Free Size"];
-  const cList = colorRows.length ? colorRows : ["As Shown"];
 
-  let totalMatrixQty = 0;
-  cList.forEach((cl) => {
-    sList.forEach((sz) => {
-      totalMatrixQty += Math.max(0, Number(st.variantStock[makeVariantKey(cl, sz)]) || 0);
-    });
+  let grandTotalPcs = 0;
+  let grandAutoBill = 0;
+  const skuCounts = {};
+  (st.items || []).forEach((it) => {
+    const { sumQty } = calcDraftDressItemQtyAndMatrix(it);
+    grandTotalPcs += sumQty;
+    grandAutoBill += sumQty * (Number(it.unitCost) || 0);
+    const k = String(it.sku || "").trim().toUpperCase();
+    if (k) skuCounts[k] = (skuCounts[k] || 0) + 1;
   });
+  grandAutoBill = Math.round(grandAutoBill * 100) / 100;
+  const dupSkus = Object.keys(skuCounts).filter((k) => skuCounts[k] > 1);
 
   const modalRoot = document.getElementById("modalRoot");
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-head">
-          <h3>${st.isEdit ? "✏️ Edit Purchase Entry" : "📦 New Purchase Entry"}</h3>
+          <h3>${st.isEdit ? `✏️ Edit Purchase Invoice (${st.items.length} Dress${st.items.length > 1 ? "es" : ""})` : "📦 New Multi-Dress Purchase Invoice"}</h3>
           <button onclick="closeModal()" style="font-size:20px;">✕</button>
         </div>
 
-        <div class="card" style="background:var(--accent-soft);padding:9px 12px;margin-bottom:10px;font-size:12px;">
-          <b>💰 Available Sales Cash:</b> Vaheeda: <b>${money(wallets.vaheeda.availableCash)}</b> · Balkees: <b>${money(wallets.balkees.availableCash)}</b>
-        </div>
-
-        <div class="field">
-          <label>Quick-Fill from Existing Outfit (or leave as New Outfit)</label>
-          <select id="purProdId" onchange="onPurSelectExistingProd(this.value)">
-            <option value="">✨ Create / Restock by Outfit Name Below</option>
-            ${db.products.map((p) => `<option value="${p.id}" ${st.productId === p.id ? 'selected' : ''}>${esc(p.name)} (${p.code ? p.code + ' · ' : ''}${p.qty} in stock)</option>`).join("")}
-          </select>
-        </div>
-
-        <!-- 1. Name & 2. SKU/Code -->
-        <div class="field-row">
-          <div class="field">
-            <label>1. Outfit Name *</label>
-            <input id="purProdName" value="${esc(st.productName)}" placeholder="e.g. Organza Handwork Kurti">
-          </div>
-          <div class="field">
-            <label>2. SKU / Code</label>
-            <input id="purSku" value="${esc(st.sku)}" placeholder="e.g. SIS-205">
-          </div>
-        </div>
-
-        <!-- 3. Category & 4. Size -->
-        <div class="field-row">
-          <div class="field">
-            <label>3. Category</label>
-            <select id="purCat">
-              ${(db.settings.categories || DEFAULT_SETTINGS.categories).map((c) => `<option value="${esc(c)}" ${st.category === c ? 'selected' : ''}>${esc(c)}</option>`).join("")}
-            </select>
-          </div>
-          <div class="field">
-            <label>4. Sizes (comma separated)</label>
-            <input id="purSizes" value="${esc(st.sizes)}" placeholder="S, M, L, XL" onchange="refreshPurchaseVariantGrid()">
-          </div>
-        </div>
-
-        <!-- 5. Colours -->
-        <div class="field">
-          <label>5. Colours (comma separated)</label>
-          <div style="display:flex;gap:6px;">
-            <input id="purColors" value="${esc(st.colors)}" placeholder="Emerald, Rose, Ivory" onchange="refreshPurchaseVariantGrid()" style="flex:1;">
-            <button type="button" class="btn btn-soft btn-sm" onclick="refreshPurchaseVariantGrid()">↻ Update Grid</button>
-          </div>
-        </div>
-
-        <!-- Colour-Specific Outfit Photo Upload during Purchase -->
-        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
-          <label style="color:var(--accent);">📸 Colour-Specific Outfit Photos (${st.prodPhotos.length})</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-            <label class="btn btn-soft btn-sm">
-              📷 + General Photo
-              <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseProdPhotos(this.files, '')">
-            </label>
-            ${cList.map((cl) => `
-              <label class="btn btn-outline btn-sm" style="border-color:var(--accent);">
-                🎨 + ${esc(cl)} Photo
-                <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseProdPhotos(this.files, '${esc(cl)}')">
-              </label>
-            `).join("")}
-          </div>
-          ${st.prodPhotos.length > 0 ? `
-            <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;">
-              ${st.prodPhotos.map((ph, idx) => `
-                <div style="width:98px;flex-shrink:0;background:var(--card);border-radius:10px;padding:4px;border:1.5px solid var(--accent);">
-                  <div style="position:relative;width:100%;height:76px;border-radius:7px;overflow:hidden;">
-                    <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;">
-                    <button type="button" onclick="cropPurProdPhotoAtIndex(${idx})" style="position:absolute;bottom:2px;left:2px;background:rgba(200,95,131,0.9);color:#fff;font-size:9px;padding:1px 4px;border-radius:4px;">✂️</button>
-                    <button type="button" onclick="removePurProdPhotoAtIndex(${idx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.9);color:#fff;width:16px;height:16px;border-radius:50%;font-size:9px;">✕</button>
-                  </div>
-                  <select style="margin-top:4px;padding:2px 4px;font-size:10px;border-radius:6px;" onchange="setPurProdPhotoColor(${idx}, this.value)">
-                    <option value="" ${!ph.color ? 'selected' : ''}>All Colours</option>
-                    ${cList.map((cl) => `<option value="${esc(cl)}" ${String(ph.color || '').toLowerCase() === cl.toLowerCase() ? 'selected' : ''}>🎨 ${esc(cl)}</option>`).join("")}
-                  </select>
-                </div>
-              `).join("")}
+        <div class="card" style="background:var(--accent-soft);padding:10px 12px;margin-bottom:10px;font-size:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div style="font-weight:900;color:var(--accent);font-size:11px;">🧾 MULTI-DRESS PURCHASE INVOICE</div>
+              <div id="purInvoiceTopSummary" style="font-weight:800;font-size:13.5px;color:var(--ink);">${st.items.length} Dress Entry(s) · Auto Total Count: ${grandTotalPcs} pcs</div>
+              <div style="font-size:11px;color:var(--muted);">Same SKU/Code items are automatically merged into ONE item & their colour/size quantities are summed.</div>
             </div>
+          </div>
+          <div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);">
+            <b>💰 Available Sales Cash:</b> Vaheeda: <b>${money(wallets.vaheeda.availableCash)}</b> · Balkees: <b>${money(wallets.balkees.availableCash)}</b>
+          </div>
+          ${dupSkus.length > 0 ? `
+            <button type="button" class="btn btn-soft btn-sm" style="width:100%;margin-top:8px;" onclick="mergeSameCodePurchaseDraftNow()">
+              🔗 Same Code (${esc(dupSkus.join(", "))}) detected — Tap to Merge into 1 Item Now
+            </button>
           ` : ""}
         </div>
 
-        <!-- 6. Quantity (Separated by Colours & Sizes) -->
-        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <label style="margin:0;color:var(--accent);">6. Quantity (Separated by Colours & Sizes)</label>
-            <span class="pill green" id="purMatrixTotalBadge">${totalMatrixQty} pcs</span>
-          </div>
-          <div style="overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:12px;">
-              <thead>
-                <tr>
-                  <th style="text-align:left;padding:5px;border-bottom:1px solid var(--line);">Colour \\ Size</th>
-                  ${sList.map((sz) => `<th style="text-align:center;padding:5px;border-bottom:1px solid var(--line);">📏 ${esc(sz)}</th>`).join("")}
-                </tr>
-              </thead>
-              <tbody>
-                ${cList.map((cl) => `
-                  <tr>
-                    <td style="padding:5px;font-weight:800;border-bottom:1px solid var(--line);">🎨 ${esc(cl)}</td>
-                    ${sList.map((sz) => {
-                      const k = makeVariantKey(cl, sz);
-                      const v = Math.max(0, Number(st.variantStock[k]) || 0);
-                      return `
-                        <td style="padding:4px;text-align:center;border-bottom:1px solid var(--line);">
-                          <input type="number" min="0" inputmode="numeric" value="${v}"
-                            style="width:54px;padding:5px;text-align:center;font-weight:800;"
-                            oninput="onPurVariantMatrixChanged('${esc(cl)}', '${esc(sz)}', this.value)">
-                        </td>
-                      `;
-                    }).join("")}
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <!-- Render Each Dress Card in the Purchase Invoice -->
+        ${st.items.map((dItem, dIdx) => {
+          const { sList, cList, sumQty, breakdownText } = calcDraftDressItemQtyAndMatrix(dItem);
+          const lineCost = Math.round(sumQty * (Number(dItem.unitCost) || 0) * 100) / 100;
+          const matchingStock = dItem.sku
+            ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(dItem.sku).trim().toLowerCase())
+            : null;
 
-        <!-- 7. Cost & 8. Selling Price -->
-        <div class="field-row">
-          <div class="field">
-            <label>7. Unit Cost Price (₹) *</label>
-            <input id="purUnitCost" type="number" inputmode="decimal" value="${st.unitCost}" placeholder="0" oninput="onPurUnitCostChanged(this.value)">
-          </div>
-          <div class="field">
-            <label>8. Selling Price (₹) *</label>
-            <input id="purSellPrice" type="number" inputmode="decimal" value="${st.sellingPrice}" placeholder="0">
-          </div>
-        </div>
+          return `
+            <div class="card" style="border:1.5px solid var(--line);margin-bottom:10px;padding:11px 12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" onclick="togglePurDressExpand(${dIdx})">
+                <div>
+                  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <span class="pill">👗 Dress #${dIdx + 1}</span>
+                    ${dItem.sku ? `<span class="pill green">Code: #${esc(dItem.sku)}</span>` : ""}
+                    <span style="font-weight:800;font-size:14px;">${esc(dItem.productName || `Dress #${dIdx + 1}`)}</span>
+                  </div>
+                  <div id="purDressHdrSub_${dIdx}" style="font-size:11.5px;font-weight:800;color:var(--accent);margin-top:2px;">
+                    Auto Count: ${sumQty} pcs · Line Cost: ${money(lineCost)}
+                  </div>
+                </div>
+                <div style="display:flex;gap:5px;align-items:center;" onclick="event.stopPropagation()">
+                  ${st.items.length > 1 ? `<button type="button" class="btn btn-danger btn-sm" onclick="removeDressFromPurchaseModal(${dIdx})">✕</button>` : ""}
+                  <button type="button" class="btn btn-soft btn-sm" onclick="togglePurDressExpand(${dIdx})">${dItem.isExpanded ? "▾ Hide" : "▸ Edit"}</button>
+                </div>
+              </div>
+
+              ${dItem.isExpanded ? `
+                <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
+                  <div class="field">
+                    <label>Quick-Fill from Existing Stock (Optional)</label>
+                    <select onchange="onPurSelectExistingProd(${dIdx}, this.value)">
+                      <option value="">✨ New Dress / Or Type SKU Code Below</option>
+                      ${db.products.map((p) => `<option value="${p.id}" ${dItem.productId === p.id ? 'selected' : ''}>${esc(p.name)} (${p.code ? '#' + p.code + ' · ' : ''}${p.qty} in stock)</option>`).join("")}
+                    </select>
+                  </div>
+
+                  <!-- 1. Name & 2. SKU/Code -->
+                  <div class="field-row">
+                    <div class="field">
+                      <label>1. Outfit / Dress Name *</label>
+                      <input id="purProdName_${dIdx}" value="${esc(dItem.productName)}" placeholder="e.g. Organza Handwork Kurti">
+                    </div>
+                    <div class="field">
+                      <label>2. SKU / Code (Same code = 1 item) *</label>
+                      <input id="purSku_${dIdx}" value="${esc(dItem.sku)}" placeholder="e.g. 123456" oninput="onPurSkuChanged(${dIdx}, this.value)">
+                    </div>
+                  </div>
+                  ${matchingStock ? `
+                    <div style="font-size:11px;font-weight:800;color:var(--green);margin-bottom:8px;">
+                      🔗 Code #${esc(dItem.sku)} exists in Stock (${esc(matchingStock.name)}, ${matchingStock.qty} pcs) — new sizes, colours & quantities will merge into this single item!
+                    </div>
+                  ` : ""}
+
+                  <!-- 3. Category & 4. Size -->
+                  <div class="field-row">
+                    <div class="field">
+                      <label>3. Category</label>
+                      <select id="purCat_${dIdx}">
+                        ${(db.settings.categories || DEFAULT_SETTINGS.categories).map((c) => `<option value="${esc(c)}" ${dItem.category === c ? 'selected' : ''}>${esc(c)}</option>`).join("")}
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>4. Sizes (comma separated)</label>
+                      <input id="purSizes_${dIdx}" value="${esc(dItem.sizes)}" placeholder="M, L, XL" onchange="refreshPurchaseVariantGrid()">
+                    </div>
+                  </div>
+
+                  <!-- 5. Colours -->
+                  <div class="field">
+                    <label>5. Colours (comma separated)</label>
+                    <div style="display:flex;gap:6px;">
+                      <input id="purColors_${dIdx}" value="${esc(dItem.colors)}" placeholder="Red, Green, Blue" onchange="refreshPurchaseVariantGrid()" style="flex:1;">
+                      <button type="button" class="btn btn-soft btn-sm" onclick="refreshPurchaseVariantGrid()">↻ Update Grid</button>
+                    </div>
+                  </div>
+
+                  <!-- 5b. Colour-Specific Outfit Photo Upload -->
+                  <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+                    <label style="color:var(--accent);">📸 5b. Colour-Specific Outfit Photos (${dItem.prodPhotos.length})</label>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+                      <label class="btn btn-soft btn-sm">
+                        📷 + General Photo
+                        <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseProdPhotos(${dIdx}, this.files, '')">
+                      </label>
+                      ${cList.map((cl) => `
+                        <label class="btn btn-outline btn-sm" style="border-color:var(--accent);">
+                          🎨 + ${esc(cl)} Photo
+                          <input type="file" accept="image/*" multiple style="display:none;" onchange="handlePurchaseProdPhotos(${dIdx}, this.files, '${esc(cl)}')">
+                        </label>
+                      `).join("")}
+                    </div>
+                    ${dItem.prodPhotos.length > 0 ? `
+                      <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;">
+                        ${dItem.prodPhotos.map((ph, pIdx) => `
+                          <div style="width:98px;flex-shrink:0;background:var(--card);border-radius:10px;padding:4px;border:1.5px solid var(--accent);">
+                            <div style="position:relative;width:100%;height:76px;border-radius:7px;overflow:hidden;">
+                              <img src="${ph.data}" style="width:100%;height:100%;object-fit:cover;">
+                              <button type="button" onclick="cropPurProdPhotoAtIndex(${dIdx}, ${pIdx})" style="position:absolute;bottom:2px;left:2px;background:rgba(200,95,131,0.9);color:#fff;font-size:9px;padding:1px 4px;border-radius:4px;">✂️</button>
+                              <button type="button" onclick="removePurProdPhotoAtIndex(${dIdx}, ${pIdx})" style="position:absolute;top:2px;right:2px;background:rgba(180,30,50,0.9);color:#fff;width:16px;height:16px;border-radius:50%;font-size:9px;">✕</button>
+                            </div>
+                            <select style="margin-top:4px;padding:2px 4px;font-size:10px;border-radius:6px;" onchange="setPurProdPhotoColor(${dIdx}, ${pIdx}, this.value)">
+                              <option value="" ${!ph.color ? 'selected' : ''}>All Colours</option>
+                              ${cList.map((cl) => `<option value="${esc(cl)}" ${String(ph.color || '').toLowerCase() === cl.toLowerCase() ? 'selected' : ''}>🎨 ${esc(cl)}</option>`).join("")}
+                            </select>
+                          </div>
+                        `).join("")}
+                      </div>
+                    ` : ""}
+                  </div>
+
+                  <!-- 6. Quantity (Separated by Colours & Sizes) -->
+                  <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                      <label style="margin:0;color:var(--accent);">6. Quantity (Separated by Colours & Sizes) *</label>
+                      <span class="pill green" id="purMatrixTotalBadge_${dIdx}">Auto Count: ${sumQty} pcs</span>
+                    </div>
+                    <div id="purMatrixFormula_${dIdx}" style="font-size:11px;font-weight:800;color:var(--ink);background:var(--card);padding:5px 8px;border-radius:7px;border:1px solid var(--line);margin-bottom:8px;">
+                      ${breakdownText ? `🧮 ${esc(breakdownText)}` : "Enter quantities in the Colour × Size cells below (auto-sums total count)"}
+                    </div>
+                    <div style="overflow-x:auto;">
+                      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        <thead>
+                          <tr>
+                            <th style="text-align:left;padding:5px;border-bottom:1px solid var(--line);">Colour \\ Size</th>
+                            ${sList.map((sz) => `<th style="text-align:center;padding:5px;border-bottom:1px solid var(--line);">📏 ${esc(sz)}</th>`).join("")}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${cList.map((cl) => `
+                            <tr>
+                              <td style="padding:5px;font-weight:800;border-bottom:1px solid var(--line);">🎨 ${esc(cl)}</td>
+                              ${sList.map((sz) => {
+                                const k = makeVariantKey(cl, sz);
+                                const v = Math.max(0, Number(dItem.variantStock[k]) || 0);
+                                return `
+                                  <td style="padding:4px;text-align:center;border-bottom:1px solid var(--line);">
+                                    <input type="number" min="0" inputmode="numeric" value="${v > 0 ? v : ''}" placeholder="0"
+                                      style="width:56px;padding:5px;text-align:center;font-weight:800;"
+                                      oninput="onPurVariantMatrixChanged(${dIdx}, '${esc(cl)}', '${esc(sz)}', this.value)">
+                                  </td>
+                                `;
+                              }).join("")}
+                            </tr>
+                          `).join("")}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <!-- 7. Unique Cost & 8. Unique Selling Price -->
+                  <div class="field-row">
+                    <div class="field">
+                      <label>7. Unique Cost / pc (₹) *</label>
+                      <input id="purUnitCost_${dIdx}" type="number" inputmode="decimal" value="${dItem.unitCost}" placeholder="0" oninput="onPurUnitCostChanged(${dIdx}, this.value)">
+                    </div>
+                    <div class="field">
+                      <label>8. Selling Price / pc (₹) *</label>
+                      <input id="purSellPrice_${dIdx}" type="number" inputmode="decimal" value="${dItem.sellingPrice}" placeholder="0" oninput="onPurSellPriceChanged(${dIdx}, this.value)">
+                    </div>
+                  </div>
+                  <div style="font-size:11px;color:var(--muted);">
+                    💡 Cost & Selling Price are unique per SKU/code on purchase. You can change Selling Price individually later in Stock → Edit anytime.
+                  </div>
+                </div>
+              ` : ""}
+            </div>
+          `;
+        }).join("")}
+
+        <button type="button" class="btn btn-gold" style="width:100%;margin-bottom:12px;" onclick="addAnotherDressToPurchaseModal()">
+          ＋ Add Another Dress to this Purchase Invoice
+        </button>
 
         <!-- 9. Owner / Paid By (Vaheeda / Balkees / Split) -->
         <div class="field">
@@ -5246,8 +5648,8 @@ function renderPurchaseModalDom() {
 
         <div class="field-row">
           <div class="field">
-            <label>Total Purchase Bill (₹) *</label>
-            <input id="purAmt" type="number" inputmode="decimal" value="${st.totalAmount}" placeholder="Auto-calculated or enter bill">
+            <label>Grand Total Purchase Bill (₹) *</label>
+            <input id="purAmt" type="number" inputmode="decimal" value="${st.totalAmount || grandAutoBill || ''}" placeholder="Auto-summed from all dresses">
           </div>
           <div class="field">
             <label>💎 Funding Source</label>
@@ -5300,7 +5702,7 @@ function renderPurchaseModalDom() {
           </div>
         </div>
 
-        <button class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="savePurchaseFromModal()">💾 Save Purchase & Sync Stock</button>
+        <button class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="savePurchaseFromModal()">💾 Save Purchase Invoice & Sync Stock</button>
       </div>
     </div>
   `;
@@ -5363,42 +5765,27 @@ window.savePurchaseFromModal = async function() {
   syncDraftPurFieldsFromDom();
   const st = _draftPurState;
   if (!st) return;
-  const prodName = (st.productName || "").trim();
-  if (!prodName) return showToast("Please enter 1. Outfit Name");
 
-  const sizeCols = String(st.sizes || "Free Size").split(",").map((x) => x.trim()).filter(Boolean);
-  const colorRows = String(st.colors || "As Shown").split(",").map((x) => x.trim()).filter(Boolean);
-  const sList = sizeCols.length ? sizeCols : ["Free Size"];
-  const cList = colorRows.length ? colorRows : ["As Shown"];
+  const validDrafts = (st.items || []).filter((it) => String(it.productName || "").trim() || String(it.sku || "").trim());
+  if (!validDrafts.length) return showToast("Please enter at least 1 Dress Name or SKU/Code");
 
-  const cleanPurMatrix = {};
-  let totalPurchasedQty = 0;
-  cList.forEach((cl) => {
-    sList.forEach((sz) => {
-      const k = makeVariantKey(cl, sz);
-      const q = Math.max(0, Number(st.variantStock[k]) || 0);
-      cleanPurMatrix[k] = q;
-      totalPurchasedQty += q;
-    });
-  });
-  if (totalPurchasedQty <= 0) totalPurchasedQty = 1;
+  // Consolidate same-code items within the invoice into a single item per code
+  const consolidated = consolidateDraftPurchaseItemsByCodeJs(validDrafts);
+  for (const cItem of consolidated) {
+    if ((Number(cItem.qty) || 0) <= 0) {
+      return showToast(`Please enter colour/size quantities (> 0) for ${cItem.productName || '#' + cItem.sku}`);
+    }
+  }
 
-  const unitCost = Math.max(0, Number(st.unitCost) || 0);
-  const sellingPrice = Math.max(0, Number(st.sellingPrice) || 0);
-  const totalAmount = Math.max(0, Number(st.totalAmount) || (unitCost * totalPurchasedQty));
-  if (totalAmount <= 0) return showToast("Please enter Unit Cost or Total Purchase Bill Amount");
+  const totalPurchasedQty = consolidated.reduce((a, it) => a + (Number(it.qty) || 0), 0);
+  const autoSumBill = Math.round(consolidated.reduce((a, it) => a + (Number(it.qty) || 0) * (Number(it.unitCost) || 0), 0) * 100) / 100;
+  const totalAmount = Math.max(0, Number(st.totalAmount) || autoSumBill);
+  if (totalAmount <= 0) return showToast("Please enter Unit Cost or Grand Total Purchase Bill Amount");
 
   const now = Date.now();
   const invoicePhotoIds = st.invoices.map((x) => x.id);
   for (const inv of st.invoices) {
     await putLocalImage(inv.id, inv.data, now, false);
-  }
-
-  const purPhotoIds = st.prodPhotos.map((x) => x.id);
-  const purPhotoColorMap = {};
-  for (const ph of st.prodPhotos) {
-    await putLocalImage(ph.id, ph.data, now, false);
-    if (ph.color) purPhotoColorMap[ph.id] = ph.color;
   }
 
   let vPaid = 0, bPaid = 0;
@@ -5411,87 +5798,155 @@ window.savePurchaseFromModal = async function() {
     vPaid = totalAmount;
   }
 
-  // Create or update Product in db.products
-  let targetProd = st.productId
-    ? db.products.find((p) => p.id === st.productId)
-    : db.products.find((p) => (st.sku && p.code && p.code.toLowerCase() === st.sku.toLowerCase()) || p.name.toLowerCase() === prodName.toLowerCase());
-
-  if (targetProd) {
-    if (!st.isEdit) {
-      const mergedMatrix = { ...(targetProd.variantStock || {}) };
-      Object.entries(cleanPurMatrix).forEach(([k, q]) => {
-        mergedMatrix[k] = Math.max(0, (Number(mergedMatrix[k]) || 0) + q);
-      });
-      targetProd.variantStock = mergedMatrix;
-      targetProd.qty = Object.values(mergedMatrix).reduce((a, v) => a + (Number(v) || 0), 0);
+  // If editing an existing purchase, reverse its previous quantities first
+  const existing = (db.purchases || []).find((x) => x.id === st.id);
+  if (existing) {
+    for (const oldItem of getEffectivePurchaseItems(existing)) {
+      const oldProd = oldItem.productId
+        ? db.products.find((p) => p.id === oldItem.productId)
+        : (oldItem.sku ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(oldItem.sku).trim().toLowerCase()) : null);
+      if (oldProd) {
+        const revMatrix = { ...(oldProd.variantStock || {}) };
+        for (const [k, q] of Object.entries(oldItem.variantStock || {})) {
+          const nextQ = (Number(revMatrix[k]) || 0) - (Number(q) || 0);
+          if (nextQ > 0) revMatrix[k] = nextQ;
+          else delete revMatrix[k];
+        }
+        oldProd.variantStock = revMatrix;
+        oldProd.qty = Object.keys(revMatrix).length > 0
+          ? Object.values(revMatrix).reduce((a, v) => a + (Number(v) || 0), 0)
+          : Math.max(0, (Number(oldProd.qty) || 0) - (Number(oldItem.qty) || 0));
+        outbox.add(`products/${oldProd.id}`);
+      }
     }
-    if (st.sku) targetProd.code = st.sku;
-    if (st.category) targetProd.category = st.category;
-    if (st.sizes) targetProd.variant = st.sizes;
-    if (st.colors) targetProd.color = st.colors;
-    if (unitCost > 0) targetProd.cost = unitCost;
-    if (sellingPrice > 0) targetProd.price = sellingPrice;
-    targetProd.owner = st.paidBy;
-    if (purPhotoIds.length > 0) {
-      const existingIds = Array.isArray(targetProd.photoIds) ? targetProd.photoIds : [];
-      targetProd.photoIds = [...new Set([...existingIds, ...purPhotoIds])];
-      targetProd.photoColorMap = { ...(targetProd.photoColorMap || {}), ...purPhotoColorMap };
-      targetProd.imgAt = now;
-    }
-    targetProd.updatedAt = nowIso();
-    targetProd._u = now;
-    outbox.add(`products/${targetProd.id}`);
-  } else {
-    const newProdId = uid();
-    if (purPhotoIds.length > 0 && st.prodPhotos[0]) {
-      await putLocalImage(newProdId, st.prodPhotos[0].data, now, false);
-      if (st.prodPhotos[0].color) purPhotoColorMap[newProdId] = st.prodPhotos[0].color;
-      purPhotoIds[0] = newProdId;
-    }
-    targetProd = {
-      id: newProdId,
-      name: prodName,
-      code: (st.sku || "").trim(),
-      category: st.category || "Kurti",
-      variant: st.sizes || "Free Size",
-      color: st.colors || "As Shown",
-      cost: unitCost || Math.round((totalAmount / totalPurchasedQty) * 100) / 100,
-      price: sellingPrice || unitCost,
-      qty: totalPurchasedQty,
-      low: 2,
-      owner: st.paidBy || "vaheeda",
-      archived: false,
-      variantStock: cleanPurMatrix,
-      photoColorMap: purPhotoColorMap,
-      notes: "",
-      imgAt: purPhotoIds.length ? now : 0,
-      photoIds: purPhotoIds,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      _u: now
-    };
-    db.products.unshift(targetProd);
-    outbox.add(`products/${targetProd.id}`);
   }
 
-  const existing = (db.purchases || []).find((x) => x.id === st.id);
+  const savedItems = [];
+  for (const cItem of consolidated) {
+    const cleanName = String(cItem.productName || "").trim() || `Dress #${cItem.sku}`;
+    const cleanSku = String(cItem.sku || "").trim();
+    const itemCost = Math.max(0, Number(cItem.unitCost) || 0) || Math.round((totalAmount / Math.max(1, totalPurchasedQty)) * 100) / 100;
+    const itemSell = Math.max(0, Number(cItem.sellingPrice) || 0) || itemCost;
+
+    const itemPhotoIds = [];
+    const itemPhotoColorMap = {};
+    for (const ph of (cItem.prodPhotos || [])) {
+      await putLocalImage(ph.id, ph.data, now, false);
+      itemPhotoIds.push(ph.id);
+      if (ph.color) itemPhotoColorMap[ph.id] = ph.color;
+    }
+
+    // Same SKU/Code items in Stock are treated as ONE single item
+    let targetProd = cleanSku
+      ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === cleanSku.toLowerCase())
+      : null;
+    if (!targetProd && cItem.productId) {
+      targetProd = db.products.find((p) => p.id === cItem.productId);
+    }
+    if (!targetProd && !cleanSku && cleanName) {
+      targetProd = db.products.find((p) => String(p.name || "").trim().toLowerCase() === cleanName.toLowerCase());
+    }
+
+    if (targetProd) {
+      const mergedSizes = mergeCsvTokensJs(targetProd.variant, cItem.sizes) || targetProd.variant;
+      const mergedColors = mergeCsvTokensJs(targetProd.color, cItem.colors) || targetProd.color;
+      const mergedMatrix = mergeVariantStockMapsJs(targetProd.variantStock, cItem.variantStock);
+      targetProd.name = cleanName || targetProd.name;
+      if (cleanSku) targetProd.code = cleanSku;
+      if (cItem.category) targetProd.category = cItem.category;
+      targetProd.variant = mergedSizes;
+      targetProd.color = mergedColors;
+      targetProd.variantStock = mergedMatrix;
+      targetProd.qty = Object.values(mergedMatrix).reduce((a, v) => a + (Number(v) || 0), 0) || ((Number(targetProd.qty) || 0) + cItem.qty);
+      if (itemCost > 0) targetProd.cost = itemCost;
+      if (Number(cItem.sellingPrice) > 0) targetProd.price = itemSell;
+      targetProd.owner = st.paidBy;
+      if (itemPhotoIds.length > 0) {
+        const existingIds = Array.isArray(targetProd.photoIds) ? targetProd.photoIds : [];
+        targetProd.photoIds = [...new Set([...existingIds, ...itemPhotoIds])];
+        targetProd.photoColorMap = { ...(targetProd.photoColorMap || {}), ...itemPhotoColorMap };
+        targetProd.imgAt = now;
+      }
+      targetProd.updatedAt = nowIso();
+      targetProd._u = now;
+      outbox.add(`products/${targetProd.id}`);
+    } else {
+      const newProdId = uid();
+      if (itemPhotoIds.length > 0 && cItem.prodPhotos && cItem.prodPhotos[0]) {
+        await putLocalImage(newProdId, cItem.prodPhotos[0].data, now, false);
+        if (cItem.prodPhotos[0].color) itemPhotoColorMap[newProdId] = cItem.prodPhotos[0].color;
+        itemPhotoIds[0] = newProdId;
+      }
+      targetProd = {
+        id: newProdId,
+        name: cleanName,
+        code: cleanSku,
+        category: cItem.category || "Kurti",
+        variant: cItem.sizes || "Free Size",
+        color: cItem.colors || "As Shown",
+        cost: itemCost,
+        price: itemSell,
+        qty: cItem.qty,
+        low: 2,
+        owner: st.paidBy || "vaheeda",
+        archived: false,
+        variantStock: cItem.variantStock,
+        photoColorMap: itemPhotoColorMap,
+        notes: "",
+        imgAt: itemPhotoIds.length ? now : 0,
+        photoIds: itemPhotoIds,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        _u: now
+      };
+      db.products.unshift(targetProd);
+      outbox.add(`products/${targetProd.id}`);
+    }
+
+    savedItems.push({
+      id: cItem.id || uid(),
+      productId: targetProd.id,
+      productName: targetProd.name,
+      sku: targetProd.code || cleanSku,
+      category: targetProd.category || "Kurti",
+      sizes: cItem.sizes || "",
+      colors: cItem.colors || "",
+      variantStock: cItem.variantStock,
+      photoIds: itemPhotoIds,
+      photoColorMap: itemPhotoColorMap,
+      qty: cItem.qty,
+      unitCost: itemCost,
+      sellingPrice: itemSell
+    });
+  }
+
+  const first = savedItems[0];
+  const summaryTitle = savedItems.length > 1
+    ? `${first.productName} + ${savedItems.length - 1} more`
+    : first.productName;
+  const allSkus = [...new Set(savedItems.map((it) => it.sku).filter(Boolean))].join(", ");
+  const allPhotoIds = [...new Set(savedItems.flatMap((it) => it.photoIds || []))];
+  const allPhotoColorMap = Object.assign({}, ...savedItems.map((it) => it.photoColorMap || {}));
+
   const record = {
     id: st.id,
     supplier: (st.supplier || "").trim() || "Wholesale Supplier",
     invoiceNo: (st.invoiceNo || "").trim(),
-    productId: targetProd.id,
-    productName: prodName,
-    sku: (st.sku || "").trim(),
-    category: st.category || "Kurti",
-    sizes: st.sizes || "",
-    colors: st.colors || "",
-    variantStock: cleanPurMatrix,
-    photoIds: purPhotoIds,
-    photoColorMap: purPhotoColorMap,
-    itemsSummary: `${prodName}${st.sku ? " (" + st.sku + ")" : ""}`,
+    title: summaryTitle,
+    productId: first.productId,
+    productName: summaryTitle,
+    sku: allSkus,
+    category: first.category || "Kurti",
+    sizes: first.sizes || "",
+    colors: first.colors || "",
+    variantStock: first.variantStock || {},
+    photoIds: allPhotoIds,
+    photoColorMap: allPhotoColorMap,
+    itemsSummary: `${summaryTitle}${allSkus ? " (#" + allSkus + ")" : ""}`,
     qty: totalPurchasedQty,
-    unitCost: unitCost || Math.round((totalAmount / totalPurchasedQty) * 100) / 100,
-    sellingPrice,
+    unitCost: first.unitCost,
+    sellingPrice: first.sellingPrice,
+    amount: totalAmount,
     totalAmount,
     paidBy: st.paidBy,
     vaheedaPaid: vPaid,
@@ -5500,6 +5955,7 @@ window.savePurchaseFromModal = async function() {
     method: st.method || "UPI / GPay",
     date: st.date || todayIso(),
     notes: st.notes || "",
+    items: savedItems,
     invoicePhotoIds,
     returns: existing?.returns || [],
     createdAt: existing?.createdAt || nowIso(),
@@ -5518,7 +5974,7 @@ window.savePurchaseFromModal = async function() {
   closeModal();
   renderApp();
   pushOutboxToFirebase();
-  showToast("Purchase & outfit stock saved 📦✨");
+  showToast(`Purchase invoice (${savedItems.length} dress code(s), ${totalPurchasedQty} pcs) saved 📦✨`);
 };
 
 // ---- Purchase Return Modal with Cash Flow Options ----
