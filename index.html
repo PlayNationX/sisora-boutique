@@ -962,21 +962,33 @@ function getCatItemState(p) {
   return catSelections[p.id];
 }
 
+function whatsappLogoSvg(size = 18) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;vertical-align:middle;"><circle cx="16" cy="16" r="15" fill="#25D366"/><path d="M16.2 7.5C11.4 7.5 7.5 11.3 7.5 16.1C7.5 17.7 8 19.3 8.8 20.6L7.4 24.6L11.6 23.3C12.9 24 14.5 24.5 16.2 24.5C21 24.5 24.9 20.7 24.9 15.9C24.9 11.3 21 7.5 16.2 7.5ZM21.2 19.6C21 20.2 20 20.7 19.5 20.8C19 20.9 18.4 21 16.4 20.2C13.8 19.1 12.1 16.5 12 16.3C11.9 16.1 10.9 14.9 10.9 13.6C10.9 12.3 11.6 11.7 11.8 11.4C12 11.2 12.3 11.1 12.5 11.1C12.7 11.1 12.8 11.1 13 11.1C13.2 11.1 13.4 11.1 13.6 11.5C13.8 12 14.3 13.2 14.4 13.3C14.5 13.4 14.5 13.6 14.4 13.8C14.3 14 14.2 14.1 14.1 14.3C13.9 14.5 13.8 14.6 13.6 14.8C13.5 14.9 13.3 15.1 13.5 15.4C13.7 15.7 14.3 16.7 15.2 17.5C16.4 18.5 17.3 18.8 17.7 19C18 19.1 18.2 19.1 18.4 18.9C18.6 18.7 19.2 18 19.4 17.7C19.6 17.4 19.8 17.5 20.1 17.6C20.4 17.7 21.6 18.3 21.8 18.4C22.1 18.6 22.2 18.6 22.3 18.8C22.3 19 22.3 19.4 21.2 19.6Z" fill="white"/></svg>`;
+}
+
+function instagramLogoSvg(size = 18) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;vertical-align:middle;"><defs><linearGradient id="igGrad" x1="2" y1="30" x2="30" y2="2" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="8" fill="url(#igGrad)"/><rect x="7.5" y="7.5" width="17" height="17" rx="5" stroke="white" stroke-width="2.2"/><circle cx="16" cy="16" r="4" stroke="white" stroke-width="2.2"/><circle cx="21.3" cy="10.7" r="1.3" fill="white"/></svg>`;
+}
+
 function renderCatalogueHelpBannerHtml() {
   const vHelpMsg = encodeURIComponent(`Hi Vaheeda! 🌷 I need help choosing/ordering an outfit from the SISORA Live Catalogue.`);
   const bHelpMsg = encodeURIComponent(`Hi Balkees! 🌸 I need help choosing/ordering an outfit from the SISORA Live Catalogue.`);
   return `
     <div class="card" style="padding:12px 14px;background:linear-gradient(135deg, var(--card), var(--accent-soft));border-color:rgba(200,95,131,0.4);">
-      <div style="font-size:12.5px;font-weight:800;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
-        <span>💬 Need Any Help? Contact Sisters Directly on WhatsApp:</span>
-        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:11.5px;font-weight:800;">📸 @sisora.business →</a>
+      <div style="font-size:12.5px;font-weight:800;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <span style="display:flex;align-items:center;gap:6px;">${whatsappLogoSvg(18)} <span>Need Any Help? Contact Sisters on WhatsApp or Instagram:</span></span>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:8px 10px;">
-          🌷 Vaheeda (${SISTER_WHATSAPP_HELP.vaheeda.display})
-        </a>
-        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:8px 10px;">
-          🌸 Balkees (${SISTER_WHATSAPP_HELP.balkees.display})
+      <div style="display:flex;flex-direction:column;gap:7px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 10px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
+            ${whatsappLogoSvg(18)} <span>💬 Help — Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
+          </a>
+          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 10px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
+            ${whatsappLogoSvg(18)} <span>💬 Help — Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
+          </a>
+        </div>
+        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);">
+          ${instagramLogoSvg(18)} <span>Instagram: @sisora.business</span>
         </a>
       </div>
     </div>
@@ -1456,6 +1468,10 @@ window.openCustomerCheckoutModal = () => {
         <button id="placeCustOrderBtn" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;margin-top:6px;" onclick="window.submitCustomerCatalogueOrder()">
           ✅ Submit Order & Send Payment Confirmation (${money(totalAmount)})
         </button>
+
+        <div style="margin-top:12px;">
+          ${renderCatalogueHelpBannerHtml()}
+        </div>
       </div>
     </div>
   `;
@@ -1626,13 +1642,13 @@ window.submitCustomerCatalogueOrder = async () => {
 
           <div style="display:flex;flex-direction:column;gap:8px;">
             <button class="btn btn-primary" style="width:100%;padding:13px;" onclick="window.sendCustOrderWhatsAppWithProof('${SISTER_WHATSAPP_HELP.vaheeda.digits}')">
-              💬 Send Confirmation + UPI Screenshot to Vaheeda (${SISTER_WHATSAPP_HELP.vaheeda.display})
+              ${whatsappLogoSvg(18)} <span>💬 Send Confirmation + UPI Screenshot to Vaheeda (${SISTER_WHATSAPP_HELP.vaheeda.display})</span>
             </button>
             <button class="btn btn-primary" style="width:100%;padding:13px;" onclick="window.sendCustOrderWhatsAppWithProof('${SISTER_WHATSAPP_HELP.balkees.digits}')">
-              💬 Send Confirmation + UPI Screenshot to Balkees (${SISTER_WHATSAPP_HELP.balkees.display})
+              ${whatsappLogoSvg(18)} <span>💬 Send Confirmation + UPI Screenshot to Balkees (${SISTER_WHATSAPP_HELP.balkees.display})</span>
             </button>
             <button class="btn btn-gold" style="width:100%;padding:13px;" onclick="window.sendCustOrderToInstagram()">
-              📸 Send Order Confirmation to Instagram (@sisora.business)
+              ${instagramLogoSvg(18)} <span>Send Order Confirmation to Instagram (@sisora.business)</span>
             </button>
             <button class="btn btn-soft" style="width:100%;" onclick="closeModal()">Continue Browsing Catalogue</button>
           </div>
@@ -2571,6 +2587,8 @@ function renderShareLiveCatalogueCardHtml() {
   const inStockCount = db.products.filter((p) => (Number(p.qty) || 0) > 0 && !p.archived).length;
   const archivedCount = db.products.filter((p) => p.archived).length;
   const liveUrl = getLiveCatalogueUrl();
+  const vHelpMsg = encodeURIComponent(`Hi Vaheeda! 🌷 I need help with an outfit from the SISORA Live Catalogue.`);
+  const bHelpMsg = encodeURIComponent(`Hi Balkees! 🌸 I need help with an outfit from the SISORA Live Catalogue.`);
   return `
     <div class="card" style="border-color:rgba(200,95,131,0.4);background:linear-gradient(135deg, var(--card), var(--accent-soft));">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -2583,10 +2601,21 @@ function renderShareLiveCatalogueCardHtml() {
         <span class="pill green" style="flex-shrink:0;">LIVE</span>
       </div>
       <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:10px;">
-        <button class="btn btn-primary btn-sm" style="flex:1;" onclick="shareLiveCatalogueLink(true)">📲 WhatsApp Live Catalogue</button>
+        <button class="btn btn-primary btn-sm" style="flex:1;" onclick="shareLiveCatalogueLink(true)">${whatsappLogoSvg(16)} <span>WhatsApp Live Catalogue</span></button>
         <button class="btn btn-gold btn-sm" onclick="shareLiveCatalogueLink(false)">📤 Share</button>
         <button class="btn btn-outline btn-sm" onclick="navigator.clipboard.writeText('${liveUrl}');showToast('Live catalogue link copied! 🔗')">📋 Copy Link</button>
         <a class="btn btn-soft btn-sm" href="${liveUrl}" target="_blank" style="text-decoration:none;">👁 Preview</a>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);">
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
+          ${whatsappLogoSvg(16)} <span>💬 Help — Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
+        </a>
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
+          ${whatsappLogoSvg(16)} <span>💬 Help — Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
+        </a>
+        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);">
+          ${instagramLogoSvg(16)} <span>Instagram: @sisora.business</span>
+        </a>
       </div>
     </div>
   `;
