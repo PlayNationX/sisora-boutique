@@ -338,6 +338,99 @@ details.set-block[open] > summary::after { transform: rotate(180deg); }
   border: 2px solid var(--line); transition: transform .12s;
 }
 .swatch-dot.active { border: 3px solid var(--ink); transform: scale(1.08); }
+
+/* Desktop Orientation Layout Enhancements (Preserves 100% of mobile layout for screens < 840px) */
+@media (min-width: 840px) {
+  .app-shell {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding-bottom: 110px;
+  }
+  .container {
+    padding: 22px 28px;
+    gap: 20px;
+  }
+  .topbar {
+    max-width: 1120px;
+    margin: 0 auto;
+    border-radius: 0 0 20px 20px;
+    padding: 16px 28px;
+  }
+  /* Floating Mac/iOS-style Dock Navigation on Desktop */
+  .bottom-nav {
+    max-width: 780px;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 18px;
+    border-radius: 26px;
+    border: 1.5px solid var(--line);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.42);
+    padding: 8px 14px;
+    background: color-mix(in srgb, var(--paper) 95%, transparent);
+  }
+  .bottom-nav-inner {
+    max-width: 100%;
+    gap: 6px;
+  }
+  .nav-item {
+    padding: 8px 12px;
+    font-size: 11px;
+    border-radius: 14px;
+  }
+  .nav-item .ico { font-size: 20px; }
+
+  /* Centered Dialog Modals on Desktop */
+  .modal-backdrop {
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal-sheet {
+    border-radius: 24px;
+    max-width: 780px;
+    max-height: 88vh;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.52);
+    border: 1.5px solid var(--line);
+    padding: 24px 28px;
+  }
+
+  /* Quick Actions: 4 columns in one row */
+  .desktop-quick-grid {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+
+  /* Outfits & Products: Responsive multi-column boutique gallery */
+  .desktop-prod-grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)) !important;
+    gap: 16px !important;
+  }
+
+  /* Purchases & Sales: Responsive multi-column cards */
+  .desktop-card-grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)) !important;
+    gap: 16px !important;
+  }
+
+  /* Catalogue Floating Order Bar on Desktop */
+  .cat-order-bar {
+    max-width: 820px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    bottom: 18px !important;
+    border-radius: 22px !important;
+    border: 1.5px solid var(--line) !important;
+    box-shadow: 0 16px 44px rgba(0,0,0,0.42) !important;
+  }
+
+  /* Catalogue Help Banner: 3-column row on Desktop */
+  .desktop-help-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 10px !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -928,6 +1021,7 @@ function getOrderedPhotosForProductColor(p, selectedColor, idToUrlObj) {
 let catProducts = [];
 let catPhotosMap = {}; // prodId -> [dataUrl, ...]
 let catPhotosByIdMap = {}; // prodId -> { imgId: dataUrl }
+let catVideosMap = {}; // prodId -> dataUrl / videoUrl
 let catShopSettings = { ...DEFAULT_SETTINGS };
 let catSearch = "";
 let catCategory = "All";
@@ -979,15 +1073,15 @@ function renderCatalogueHelpBannerHtml() {
         <span style="display:flex;align-items:center;gap:6px;">${whatsappLogoSvg(18)} <span>Need Any Help? Contact Sisters on WhatsApp or Instagram:</span></span>
       </div>
       <div style="display:flex;flex-direction:column;gap:7px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 10px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
-            ${whatsappLogoSvg(18)} <span>💬 Help — Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
+        <div class="desktop-help-row" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;">
+            ${whatsappLogoSvg(18)} <span>WhatsApp Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
           </a>
-          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 10px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
-            ${whatsappLogoSvg(18)} <span>💬 Help — Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
+          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;">
+            ${whatsappLogoSvg(18)} <span>WhatsApp Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
           </a>
         </div>
-        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);">
+        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;">
           ${instagramLogoSvg(18)} <span>Instagram: @sisora.business</span>
         </a>
       </div>
@@ -1053,7 +1147,7 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
 
     renderLiveCatalogueDom();
 
-    // Load product photos progressively in parallel
+    // Load product photos and videos progressively in parallel
     await Promise.all(
       catProducts.map(async (p) => {
         const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
@@ -1069,8 +1163,14 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
         if (urls.length) {
           catPhotosMap[p.id] = urls;
           catPhotosByIdMap[p.id] = byId;
-          renderLiveCatalogueDom();
         }
+        if (p.videoId) {
+          const vIm = await fbGet(`shops/${shopId}/data/images/${p.videoId}`).catch(() => null);
+          if (vIm && vIm.data) {
+            catVideosMap[p.id] = vIm.data;
+          }
+        }
+        renderLiveCatalogueDom();
       })
     );
   } catch (err) {
@@ -1137,7 +1237,7 @@ function renderLiveCatalogueDom() {
             <h3 style="margin:8px 0 4px;">No matching outfits in stock</h3>
             <p style="color:var(--muted);margin:0;">Try clearing your search or choosing another category.</p>
           </div>
-        ` : filtered.map((p) => {
+        ` : `<div class="desktop-prod-grid">` + filtered.map((p) => {
           const st = getCatItemState(p);
           const byId = catPhotosByIdMap[p.id] || {};
           const photos = Object.keys(byId).length
@@ -1150,6 +1250,7 @@ function renderLiveCatalogueDom() {
           const maxQty = Math.max(1, selectedComboQty || Number(p.qty) || 1);
           const colorMap = (p.photoColorMap && typeof p.photoColorMap === "object") ? p.photoColorMap : {};
           const hasColorPhoto = Object.values(colorMap).some((c) => String(c || "").trim().toLowerCase() === String(st.color || "").trim().toLowerCase());
+          const hasVideo = Boolean((p.videoUrl && p.videoUrl.trim()) || (p.videoId && p.videoId.trim()) || catVideosMap[p.id]);
 
           return `
             <div class="prod-tile" style="${st.selected ? 'border:2.5px solid var(--accent);box-shadow:0 10px 28px rgba(200,95,131,0.22);' : ''}">
@@ -1160,6 +1261,7 @@ function renderLiveCatalogueDom() {
                   <div class="prod-thumb" style="width:96px;height:116px;border-radius:14px;cursor:pointer;" onclick="window.openCatProductGallery('${p.id}', 0)">
                     ${coverUrl ? `<img src="${coverUrl}" alt="${esc(p.name)}">` : "👗"}
                     <span class="photo-count-badge">🔍 ${hasColorPhoto ? esc(st.color) : (photos.length > 1 ? `${photos.length} photos` : "Zoom")}</span>
+                    ${hasVideo ? `<span style="position:absolute;top:4px;left:4px;background:rgba(200,95,131,0.92);color:#fff;border-radius:99px;font-size:9.5px;font-weight:800;padding:2px 6px;box-shadow:0 2px 6px rgba(0,0,0,0.3);" onclick="event.stopPropagation();window.openCatProductVideo('${p.id}')">▶ Video</span>` : ""}
                   </div>
 
                   <div class="prod-info">
@@ -1173,6 +1275,7 @@ function renderLiveCatalogueDom() {
                     <div class="pill-row" style="margin-top:4px;">
                       <span class="pill green">✅ ${selectedComboQty} available (${esc(st.color)} · ${esc(st.size)})</span>
                       ${st.selected ? `<span class="pill" style="background:var(--accent);color:#fff;">✓ Selected (${st.qty})</span>` : ""}
+                      ${hasVideo ? `<button type="button" class="btn btn-soft btn-sm" style="font-size:10.5px;padding:2px 8px;border:1px solid var(--accent);color:var(--ink);font-weight:800;border-radius:99px;" onclick="event.stopPropagation();window.openCatProductVideo('${p.id}')">🎬 Watch Video Reel</button>` : ""}
                     </div>
 
                     ${photos.length > 1 ? `
@@ -1245,11 +1348,11 @@ function renderLiveCatalogueDom() {
               </div>
             </div>
           `;
-        }).join("")}
+        }).join("") + `</div>`}
       </main>
 
       <!-- Sticky Bottom Customer Order Bar -->
-      <div style="position:fixed;bottom:0;left:0;right:0;z-index:50;background:color-mix(in srgb, var(--paper) 95%, transparent);backdrop-filter:blur(16px);border-top:1.5px solid var(--line);padding:12px 16px calc(12px + var(--safe-bottom));">
+      <div class="cat-order-bar" style="position:fixed;bottom:0;left:0;right:0;z-index:50;background:color-mix(in srgb, var(--paper) 95%, transparent);backdrop-filter:blur(16px);border-top:1.5px solid var(--line);padding:12px 16px calc(12px + var(--safe-bottom));">
         <div style="max-width:600px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;">
           <div>
             <div style="font-size:12px;color:var(--muted);font-weight:700;">
@@ -1284,6 +1387,43 @@ window.openCatProductGallery = (prodId, startIdx = 0) => {
     : (catPhotosMap[prodId] || []);
   if (!urls.length) return showToast("Photo loading…");
   openLightbox(urls, startIdx);
+};
+
+window.openCatProductVideo = (prodId) => {
+  const p = catProducts.find((x) => x.id === prodId) || db.products.find((x) => x.id === prodId);
+  if (!p) return;
+  const vData = catVideosMap[prodId] || imgMap.get(p.videoId)?.data || "";
+  const vUrl = p.videoUrl || "";
+  const isIg = vUrl.includes("instagram.com");
+  const modalRoot = document.getElementById("modalRoot");
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" style="align-items:center;padding:16px;" onclick="if(event.target===this)closeModal()">
+      <div class="modal-sheet" style="max-width:540px;text-align:center;padding:20px;">
+        <div class="modal-head">
+          <h3 style="display:flex;align-items:center;gap:6px;">🎬 ${esc(p.name)}</h3>
+          <button onclick="closeModal()" style="font-size:20px;">✕</button>
+        </div>
+        ${vData ? `
+          <video src="${vData}" controls autoplay playsinline loop style="width:100%;max-height:65dvh;border-radius:14px;background:#000;box-shadow:0 12px 32px rgba(0,0,0,0.4);"></video>
+        ` : (vUrl ? (isIg ? `
+          <div class="card" style="padding:24px 16px;background:linear-gradient(135deg, var(--card), var(--accent-soft));text-align:center;">
+            <div style="margin-bottom:12px;">${instagramLogoSvg(42)}</div>
+            <h4 style="margin:0 0 6px;">Instagram Video Reel</h4>
+            <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;">Watch this outfit in action on SISORA's official Instagram page:</p>
+            <a href="${vUrl}" target="_blank" class="btn btn-primary" style="padding:12px 18px;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">
+              ${instagramLogoSvg(18)} <span>Watch Reel on Instagram (@sisora.business) →</span>
+            </a>
+          </div>
+        ` : `
+          <video src="${vUrl}" controls autoplay playsinline loop style="width:100%;max-height:65dvh;border-radius:14px;background:#000;"></video>
+        `) : `<p style="color:var(--muted);">No video available for this outfit.</p>`)}
+        <div style="display:flex;gap:8px;margin-top:14px;justify-content:center;">
+          <button class="btn btn-outline btn-sm" onclick="closeModal()">Close</button>
+          <button class="btn btn-primary btn-sm" onclick="closeModal();window.orderSingleCatItemNow('${p.id}')">🛍️ Order this Outfit (${money(p.price)})</button>
+        </div>
+      </div>
+    </div>
+  `;
 };
 window.updateCatItemOption = (prodId, field, value) => {
   const p = catProducts.find((x) => x.id === prodId);
@@ -2607,13 +2747,13 @@ function renderShareLiveCatalogueCardHtml() {
         <a class="btn btn-soft btn-sm" href="${liveUrl}" target="_blank" style="text-decoration:none;">👁 Preview</a>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);">
-        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
-          ${whatsappLogoSvg(16)} <span>💬 Help — Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;gap:6px;">
+          ${whatsappLogoSvg(16)} <span>WhatsApp Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
         </a>
-        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);">
-          ${whatsappLogoSvg(16)} <span>💬 Help — Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;gap:6px;">
+          ${whatsappLogoSvg(16)} <span>WhatsApp Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
         </a>
-        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);">
+        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;border:1px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);display:inline-flex;align-items:center;gap:6px;">
           ${instagramLogoSvg(16)} <span>Instagram: @sisora.business</span>
         </a>
       </div>
@@ -2648,7 +2788,7 @@ function renderHomeTab() {
     ${renderPendingDeletesBannerHtml()}
 
     ${db.settings.showQuick !== false ? `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
+      <div class="desktop-quick-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
         <button class="btn btn-primary" onclick="openProductModal()">＋ Add Dress / Stock</button>
         <button class="btn btn-gold" onclick="openSaleModal()">🛍️ Record Sale</button>
         <button class="btn btn-soft" onclick="openPurchaseModal()">📦 Record Purchase</button>
@@ -2734,7 +2874,7 @@ function renderStockTab() {
     <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;">
       ${cats.map((c) => `<button class="btn btn-sm ${stockCategory === c ? 'btn-primary' : 'btn-outline'}" style="flex-shrink:0;" onclick="window.setStockCat('${esc(c)}')">${esc(c)}</button>`).join("")}
     </div>
-    ${filtered.length === 0 ? `<div class="card" style="text-align:center;color:var(--muted);">No matching outfits found.</div>` : filtered.map(renderProductCardHtml).join("")}
+    ${filtered.length === 0 ? `<div class="card" style="text-align:center;color:var(--muted);">No matching outfits found.</div>` : `<div class="desktop-prod-grid">` + filtered.map(renderProductCardHtml).join("") + `</div>`}
   `;
 }
 window.setStockQuery = (v) => { stockQuery = v; renderApp(); };
@@ -2816,7 +2956,7 @@ function renderPurchasesTab() {
         <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px;">Record multi-dress purchase invoices, auto-calculate counts by colours & sizes, merge same-code items, split payments, and upload invoices.</p>
         <button class="btn btn-primary" onclick="openPurchaseModal()">＋ Record First Purchase</button>
       </div>
-    ` : filtered.map((pur) => {
+    ` : `<div class="desktop-card-grid">` + filtered.map((pur) => {
       const effItems = getEffectivePurchaseItems(pur);
       const invIds = Array.isArray(pur.invoicePhotoIds) ? pur.invoicePhotoIds : [];
       const retTotal = (pur.returns || []).reduce((a, r) => a + (Number(r.returnAmount) || 0), 0);
@@ -2883,13 +3023,13 @@ function renderPurchasesTab() {
 
           <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:flex-end;">
             ${invIds.length > 0 ? `<button class="btn btn-outline btn-sm" onclick="openPurchaseInvoiceGallery('${pur.id}')">🧾 View Invoice</button>` : ""}
-            <button class="btn btn-gold btn-sm" onclick="openPurchaseReturnModal('${pur.id}')">↩️ Purchase Return</button>
-            <button class="btn btn-soft btn-sm" onclick="openPurchaseModal('${pur.id}')">✏️ Edit</button>
-            <button class="btn btn-danger btn-sm" onclick="deletePurchaseItem('${pur.id}')">🗑</button>
+            <button class="btn btn-gold btn-sm" onclick="openPurchaseReturnModal('${pur.id}')">↩️ Return</button>
+            <button class="btn btn-soft btn-sm" onclick="openPurchaseModal('${pur.id}')">✏️ Edit Purchase</button>
+            <button class="btn btn-danger btn-sm" onclick="deletePurchaseItem('${pur.id}')">🗑️ Delete Purchase</button>
           </div>
         </div>
       `;
-    }).join("")}
+    }).join("") + `</div>`}
   `;
 }
 window.setPurchasesQuery = (v) => { purchasesQuery = v; renderApp(); };
@@ -4270,6 +4410,9 @@ window.confirmSplitAmountPopup = function() {
 let draftPhotos = []; // Array of { id, data, color }
 let editingProdId = null;
 let _draftProdVariantStock = {};
+let _draftProdVideoData = null;
+let _draftProdVideoUrl = "";
+let _draftProdVideoDeleted = false;
 
 window.openProductModal = function(prodId = null) {
   editingProdId = prodId;
@@ -4279,7 +4422,15 @@ window.openProductModal = function(prodId = null) {
 
   draftPhotos = [];
   _draftProdVariantStock = {};
+  _draftProdVideoData = null;
+  _draftProdVideoUrl = existing?.videoUrl || "";
+  _draftProdVideoDeleted = false;
+
   if (existing) {
+    if (existing.videoId) {
+      const vIm = imgMap.get(existing.videoId);
+      if (vIm && vIm.data) _draftProdVideoData = vIm.data;
+    }
     const ids = Array.isArray(existing.photoIds) && existing.photoIds.length ? existing.photoIds : (existing.imgAt ? [existing.id] : []);
     const pColMap = (existing.photoColorMap && typeof existing.photoColorMap === "object") ? existing.photoColorMap : {};
     ids.forEach((pid) => {
@@ -4301,6 +4452,7 @@ function readCurrentProductDraftForm() {
     category: document.getElementById("pCat")?.value || "Kurti",
     variant: document.getElementById("pVar")?.value || "S, M, L, XL",
     color: document.getElementById("pCol")?.value || "As Shown",
+    videoUrl: document.getElementById("pVideoUrl")?.value ?? _draftProdVideoUrl,
     cost: document.getElementById("pCost")?.value || "",
     price: document.getElementById("pPrice")?.value || "",
     owner: document.getElementById("pOwner")?.value || "vaheeda",
@@ -4431,6 +4583,38 @@ function renderProductModalDom(existing) {
           </div>
         </div>
 
+        <!-- 5b. Outfit Video Reel (Optional) -->
+        <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <label style="margin:0;color:var(--accent);font-weight:800;">🎬 Outfit Video Reel (Optional)</label>
+            <span class="pill" style="font-size:10px;">Catalogue Video</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+            Upload a video clip (MP4 / WebM / MOV) or paste an Instagram Reel link. Customers can watch it directly in the live catalogue!
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+            <label class="btn btn-soft btn-sm">
+              🎥 + Upload Video File
+              <input type="file" accept="video/mp4,video/webm,video/quicktime,video/*" style="display:none;" onchange="handleProductVideoSelect(this.files)">
+            </label>
+            <input id="pVideoUrl" value="${esc(p.videoUrl || _draftProdVideoUrl || '')}" placeholder="Or paste Instagram Reel link (https://...)" style="flex:1;min-width:200px;font-size:12px;" oninput="_draftProdVideoUrl=this.value">
+          </div>
+          ${(_draftProdVideoData || p.videoUrl || _draftProdVideoUrl) ? `
+            <div style="background:var(--card);border-radius:10px;padding:8px 10px;border:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                <span style="font-size:16px;">🎬</span>
+                <span style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                  ${_draftProdVideoData ? "Video file attached (ready to preview)" : esc(p.videoUrl || _draftProdVideoUrl)}
+                </span>
+              </div>
+              <div style="display:flex;gap:4px;flex-shrink:0;">
+                <button type="button" class="btn btn-outline btn-sm" onclick="previewCurrentDraftVideo()">▶ Preview</button>
+                <button type="button" class="btn btn-danger btn-sm" onclick="removeDraftVideo()">✕</button>
+              </div>
+            </div>
+          ` : ""}
+        </div>
+
         <!-- 6. Quantity (Separated by Colours and Sizes Matrix) -->
         <div class="field" style="background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -4550,6 +4734,54 @@ window.removeDraftPhoto = function(idx) {
   renderProductModalDom(readCurrentProductDraftForm());
 };
 
+window.handleProductVideoSelect = function(fileList) {
+  if (!fileList || !fileList.length) return;
+  const file = fileList[0];
+  if (file.size > 35 * 1024 * 1024) {
+    return showToast("Please choose a video file under 35MB for faster uploading");
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    _draftProdVideoData = e.target.result;
+    _draftProdVideoDeleted = false;
+    const cur = readCurrentProductDraftForm();
+    renderProductModalDom(cur);
+    showToast("Outfit video attached 🎬");
+  };
+  reader.readAsDataURL(file);
+};
+
+window.removeDraftVideo = function() {
+  _draftProdVideoData = null;
+  _draftProdVideoUrl = "";
+  _draftProdVideoDeleted = true;
+  const cur = readCurrentProductDraftForm();
+  cur.videoUrl = "";
+  renderProductModalDom(cur);
+  showToast("Video removed");
+};
+
+window.previewCurrentDraftVideo = function() {
+  const vData = _draftProdVideoData;
+  const vUrl = (document.getElementById("pVideoUrl")?.value || _draftProdVideoUrl || "").trim();
+  if (!vData && !vUrl) return showToast("No video attached to preview");
+  const modalRoot = document.getElementById("modalRoot");
+  const prevHtml = modalRoot.innerHTML;
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" style="align-items:center;padding:16px;z-index:300;" onclick="if(event.target===this){document.getElementById('modalRoot').innerHTML=window._videoPrevModalBackup;}">
+      <div class="modal-sheet" style="max-width:540px;text-align:center;padding:20px;">
+        <div class="modal-head">
+          <h3>🎬 Video Preview</h3>
+          <button onclick="document.getElementById('modalRoot').innerHTML=window._videoPrevModalBackup;" style="font-size:20px;">✕</button>
+        </div>
+        ${vData ? `<video src="${vData}" controls autoplay playsinline loop style="width:100%;max-height:65dvh;border-radius:14px;background:#000;"></video>` : `<video src="${vUrl}" controls autoplay playsinline loop style="width:100%;max-height:65dvh;border-radius:14px;background:#000;"></video>`}
+        <button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="document.getElementById('modalRoot').innerHTML=window._videoPrevModalBackup;">Close Preview</button>
+      </div>
+    </div>
+  `;
+  window._videoPrevModalBackup = prevHtml;
+};
+
 function mergeCsvTokensJs(...csvs) {
   const seen = new Set();
   const out = [];
@@ -4639,10 +4871,28 @@ window.saveProductFromModal = async function() {
     existingByCode.photoIds = mergedPhotos;
     existingByCode.photoColorMap = { ...(existingByCode.photoColorMap || {}), ...photoColorMap };
     if (mergedPhotos.length) existingByCode.imgAt = now;
+    const videoUrl = (document.getElementById("pVideoUrl")?.value || _draftProdVideoUrl || "").trim();
+    existingByCode.videoUrl = videoUrl;
+    if (_draftProdVideoData) {
+      const vId = `vid_${targetId}`;
+      await putLocalImage(vId, _draftProdVideoData, now, false);
+      existingByCode.videoId = vId;
+    } else if (_draftProdVideoDeleted) {
+      existingByCode.videoId = "";
+    }
     existingByCode.updatedAt = nowIso();
     existingByCode._u = now;
     targetId = existingByCode.id;
   } else {
+    const videoUrl = (document.getElementById("pVideoUrl")?.value || _draftProdVideoUrl || "").trim();
+    let videoId = existingById?.videoId || "";
+    if (_draftProdVideoData) {
+      videoId = `vid_${id}`;
+      await putLocalImage(videoId, _draftProdVideoData, now, false);
+    } else if (_draftProdVideoDeleted) {
+      videoId = "";
+    }
+
     const item = {
       id,
       name,
@@ -4650,6 +4900,8 @@ window.saveProductFromModal = async function() {
       category: document.getElementById("pCat")?.value || "Kurti",
       variant: variantStr,
       color: colorStr,
+      videoUrl,
+      videoId,
       cost: parsedCost,
       price: parsedPrice,
       qty: totalQty,
@@ -4693,6 +4945,31 @@ function executeApprovedDeletion(targetType, targetId) {
     db.tombs.push({ c: "sales", id: targetId, _u: now });
     outbox.add(`sales/${targetId}`);
   } else if (targetType === "purchase") {
+    const pur = (db.purchases || []).find((x) => x.id === targetId);
+    if (pur) {
+      const effItems = getEffectivePurchaseItems(pur);
+      effItems.forEach((item) => {
+        const pIdx = db.products.findIndex((pr) => (item.productId && pr.id === item.productId) || (item.sku && String(pr.code || "").trim().toLowerCase() === String(item.sku).trim().toLowerCase()));
+        if (pIdx >= 0) {
+          const pr = db.products[pIdx];
+          const revVarStock = { ...(pr.variantStock || {}) };
+          if (item.variantStock && typeof item.variantStock === "object") {
+            Object.entries(item.variantStock).forEach(([k, q]) => {
+              const curQ = Number(revVarStock[k]) || 0;
+              const nxtQ = curQ - Number(q || 0);
+              if (nxtQ > 0) revVarStock[k] = nxtQ; else delete revVarStock[k];
+            });
+          }
+          const itemPcs = Number(item.qty) || 1;
+          const newQty = Math.max(0, (Number(pr.qty) || 0) - itemPcs);
+          const finalQty = Object.keys(revVarStock).length > 0 ? Object.values(revVarStock).reduce((a, v) => a + (Number(v) || 0), 0) : newQty;
+          pr.qty = finalQty;
+          pr.variantStock = revVarStock;
+          pr._u = now;
+          outbox.add(`products/${pr.id}`);
+        }
+      });
+    }
     db.purchases = (db.purchases || []).filter((x) => x.id !== targetId);
     db.tombs.push({ c: "purchases", id: targetId, _u: now });
     outbox.add(`purchases/${targetId}`);
@@ -5702,7 +5979,10 @@ function renderPurchaseModalDom() {
           </div>
         </div>
 
-        <button class="btn btn-primary" style="width:100%;margin-top:6px;" onclick="savePurchaseFromModal()">💾 Save Purchase Invoice & Sync Stock</button>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          ${st.isEdit ? `<button type="button" class="btn btn-danger" onclick="deletePurchaseItem('${st.id}')">🗑️ Delete Purchase Invoice</button>` : ""}
+          <button class="btn btn-primary" style="flex:1;" onclick="savePurchaseFromModal()">💾 ${st.isEdit ? "Update" : "Save"} Purchase Invoice & Sync Stock</button>
+        </div>
       </div>
     </div>
   `;
