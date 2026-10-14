@@ -1141,14 +1141,39 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
       applyTheme();
     }
 
-    const inStockList = [];
+    const prodMap = new Map();
+    // 1. Seed with Firebase products
     if (rawProducts && typeof rawProducts === "object") {
       for (const [pid, wrap] of Object.entries(rawProducts)) {
         if (!wrap || wrap.deleted || !wrap.j) continue;
         const p = typeof wrap.j === "string" ? JSON.parse(wrap.j) : wrap.j;
-        if (p && Number(p.qty) > 0 && !p.archived) {
-          inStockList.push(p);
-        }
+        if (p && p.id) prodMap.set(p.id, p);
+      }
+    }
+    // 2. Merge local products if available (from db.products or localStorage)
+    const localProds = (typeof db !== "undefined" && Array.isArray(db.products) && db.products.length)
+      ? db.products
+      : (function() {
+          try {
+            const raw = localStorage.getItem("sisora_db_v2") || localStorage.getItem("sisora_db");
+            if (raw) {
+              const d = JSON.parse(raw);
+              return Array.isArray(d.products) ? d.products : [];
+            }
+          } catch (e) {}
+          return [];
+        })();
+    for (const lp of localProds) {
+      if (!lp || !lp.id) continue;
+      const remote = prodMap.get(lp.id);
+      if (!remote || (Number(lp._u) || 0) >= (Number(remote._u) || 0)) {
+        prodMap.set(lp.id, lp);
+      }
+    }
+    const inStockList = [];
+    for (const p of prodMap.values()) {
+      if (p && Number(p.qty) > 0 && !p.archived) {
+        inStockList.push(p);
       }
     }
     inStockList.sort((a, b) => (Number(b._u) || 0) - (Number(a._u) || 0));
@@ -3040,8 +3065,9 @@ function renderPurchasesTab() {
             <div style="margin-top:8px;padding:8px 10px;background:var(--red-soft);border-radius:10px;font-size:11.5px;">
               <b>↩️ Purchase Returns (${pur.returns.length}):</b>
               ${pur.returns.map((r) => `
-                <div style="margin-top:3px;">
-                  • ${esc(r.date)}: Qty ${r.qty} · <b>${money(r.returnAmount ?? r.amount)}</b> (${esc(r.cashFlowMode?.replace(/_/g, " ") || "refund")}) ${r.reason ? `— ${esc(r.reason)}` : ""}
+                <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">
+                  <span>• ${esc(r.date)}: Qty ${r.qty}${r.productName ? ` · ${esc(r.productName)}` : ""}${r.variantKey ? ` (${esc(r.variantKey)})` : ""} · <b>${money(r.returnAmount ?? r.amount)}</b> (${esc(r.cashFlowMode?.replace(/_/g, " ") || "refund")}) ${r.reason ? `— ${esc(r.reason)}` : ""}</span>
+                  <button type="button" class="btn btn-outline btn-sm" style="font-size:10px;padding:1px 6px;" onclick="undoPurchaseReturn('${pur.id}', '${r.id}')">↩ Undo Return</button>
                 </div>
               `).join("")}
             </div>
@@ -6110,7 +6136,7 @@ window.savePurchaseFromModal = async function() {
     for (const oldItem of getEffectivePurchaseItems(existing)) {
       const oldProd = oldItem.productId
         ? db.products.find((p) => p.id === oldItem.productId)
-        : (oldItem.sku ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(oldItem.sku).trim().toLowerCase()) : null);
+        : (oldItem.sku ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(oldItem.sku).trim().toLowerCase()) : (existing.productId ? db.products.find((p) => p.id === existing.productId) : null));
       if (oldProd) {
         const revMatrix = { ...(oldProd.variantStock || {}) };
         for (const [k, q] of Object.entries(oldItem.variantStock || {})) {
@@ -6122,6 +6148,8 @@ window.savePurchaseFromModal = async function() {
         oldProd.qty = Object.keys(revMatrix).length > 0
           ? Object.values(revMatrix).reduce((a, v) => a + (Number(v) || 0), 0)
           : Math.max(0, (Number(oldProd.qty) || 0) - (Number(oldItem.qty) || 0));
+        oldProd._u = now;
+        oldProd.updatedAt = nowIso();
         outbox.add(`products/${oldProd.id}`);
       }
     }
@@ -6142,31 +6170,39 @@ window.savePurchaseFromModal = async function() {
       if (ph.color) itemPhotoColorMap[ph.id] = ph.color;
     }
 
-    // Same SKU/Code items in Stock are treated as ONE single item
-    let targetProd = cleanSku
-      ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === cleanSku.toLowerCase())
-      : null;
-    if (!targetProd && cItem.productId) {
-      targetProd = db.products.find((p) => p.id === cItem.productId);
+    // Match existing product in stock: check linked productId first, then SKU, then Name
+    let targetProd = cItem.productId ? db.products.find((p) => p.id === cItem.productId) : null;
+    if (!targetProd && cleanSku) {
+      targetProd = db.products.find((p) => String(p.code || "").trim().toLowerCase() === cleanSku.toLowerCase());
     }
-    if (!targetProd && !cleanSku && cleanName) {
+    if (!targetProd && cleanName) {
       targetProd = db.products.find((p) => String(p.name || "").trim().toLowerCase() === cleanName.toLowerCase());
     }
 
     if (targetProd) {
-      const mergedSizes = mergeCsvTokensJs(targetProd.variant, cItem.sizes) || targetProd.variant;
-      const mergedColors = mergeCsvTokensJs(targetProd.color, cItem.colors) || targetProd.color;
       const mergedMatrix = mergeVariantStockMapsJs(targetProd.variantStock, cItem.variantStock);
       targetProd.name = cleanName || targetProd.name;
       if (cleanSku) targetProd.code = cleanSku;
       if (cItem.category) targetProd.category = cItem.category;
-      targetProd.variant = mergedSizes;
-      targetProd.color = mergedColors;
-      targetProd.variantStock = mergedMatrix;
-      targetProd.qty = Object.values(mergedMatrix).reduce((a, v) => a + (Number(v) || 0), 0) || ((Number(targetProd.qty) || 0) + cItem.qty);
+      targetProd.price = itemSell; // Always sync updated selling price to product so catalogue reflects immediately
       if (itemCost > 0) targetProd.cost = itemCost;
-      if (Number(cItem.sellingPrice) > 0) targetProd.price = itemSell;
-      targetProd.owner = st.paidBy;
+      targetProd.owner = st.paidBy || targetProd.owner;
+      targetProd.variantStock = mergedMatrix;
+      targetProd.qty = Object.keys(mergedMatrix).length > 0
+        ? Object.values(mergedMatrix).reduce((a, v) => a + (Number(v) || 0), 0)
+        : Math.max(0, (Number(targetProd.qty) || 0) + (Number(cItem.qty) || 0));
+
+      // Recompute active colors and sizes so deleted variants are cleanly removed from catalogue filters
+      const activeColors = Object.keys(mergedMatrix).map((k) => k.split("|")[0].trim()).filter(Boolean);
+      const parsedColors = String(cItem.colors || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const finalColors = [...new Set([...activeColors, ...parsedColors])].filter(Boolean);
+      targetProd.color = finalColors.length ? finalColors.join(", ") : (cItem.colors || targetProd.color || "As Shown");
+
+      const activeSizes = Object.keys(mergedMatrix).map((k) => k.split("|")[1]?.trim()).filter(Boolean);
+      const parsedSizes = String(cItem.sizes || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const finalSizes = [...new Set([...activeSizes, ...parsedSizes])].filter(Boolean);
+      targetProd.variant = finalSizes.length ? finalSizes.join(", ") : (cItem.sizes || targetProd.variant || "Free Size");
+
       if (itemPhotoIds.length > 0) {
         const existingIds = Array.isArray(targetProd.photoIds) ? targetProd.photoIds : [];
         targetProd.photoIds = [...new Set([...existingIds, ...itemPhotoIds])];
@@ -6196,6 +6232,8 @@ window.savePurchaseFromModal = async function() {
         low: 2,
         owner: st.paidBy || "vaheeda",
         archived: false,
+        videoUrl: "",
+        videoId: "",
         variantStock: cItem.variantStock,
         photoColorMap: itemPhotoColorMap,
         notes: "",
@@ -6279,21 +6317,26 @@ window.savePurchaseFromModal = async function() {
   saveOutbox();
   closeModal();
   renderApp();
-  pushOutboxToFirebase();
+  await pushOutboxToFirebase();
   showToast(`Purchase invoice (${savedItems.length} dress code(s), ${totalPurchasedQty} pcs) saved 📦✨`);
 };
 
-// ---- Purchase Return Modal with Cash Flow Options ----
+// ---- Purchase Return Modal with Multi-Dress & Variant Support ----
 let _purReturnState = null;
 
 window.openPurchaseReturnModal = function(purId) {
   const pur = (db.purchases || []).find((x) => x.id === purId);
   if (!pur) return;
+  const effItems = getEffectivePurchaseItems(pur);
+  const firstItem = effItems[0] || {};
+  const defaultCost = Number(firstItem.unitCost) > 0 ? Number(firstItem.unitCost) : (Number(pur.unitCost) > 0 ? Number(pur.unitCost) : (Number(pur.totalAmount) || 0));
   _purReturnState = {
     purId,
+    itemIdx: 0,
+    variantKey: "",
     qty: 1,
-    returnAmount: pur.unitCost || pur.totalAmount || 0,
-    deductStock: Boolean(pur.productId),
+    returnAmount: defaultCost,
+    deductStock: true,
     cashFlowMode: pur.paidBy === "balkees" ? "cash_refund_balkees" : (pur.paidBy === "split" ? "cash_refund_split" : "cash_refund_vaheeda"),
     vaheedaRefund: 0,
     balkeesRefund: 0,
@@ -6302,11 +6345,39 @@ window.openPurchaseReturnModal = function(purId) {
   renderPurchaseReturnModalDom();
 };
 
+window.onPurReturnItemChanged = function(newIdx) {
+  if (!_purReturnState) return;
+  const pur = (db.purchases || []).find((x) => x.id === _purReturnState.purId);
+  if (!pur) return;
+  const idx = Math.max(0, Number(newIdx) || 0);
+  _purReturnState.itemIdx = idx;
+  _purReturnState.variantKey = "";
+  const effItems = getEffectivePurchaseItems(pur);
+  const it = effItems[idx] || {};
+  const cost = Number(it.unitCost) > 0 ? Number(it.unitCost) : (Number(pur.unitCost) || 0);
+  if (cost > 0) {
+    _purReturnState.returnAmount = Math.round(cost * (_purReturnState.qty || 1) * 100) / 100;
+  }
+  renderPurchaseReturnModalDom();
+};
+
+window.onPurReturnVariantChanged = function(vKey) {
+  if (!_purReturnState) return;
+  _purReturnState.variantKey = vKey || "";
+};
+
 function renderPurchaseReturnModalDom() {
   if (!_purReturnState) return;
   const st = _purReturnState;
   const pur = (db.purchases || []).find((x) => x.id === st.purId);
   if (!pur) return;
+  const effItems = getEffectivePurchaseItems(pur);
+  const selItem = effItems[st.itemIdx] || effItems[0] || {};
+  const targetProd = selItem.productId
+    ? db.products.find((p) => p.id === selItem.productId)
+    : (selItem.sku ? db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(selItem.sku).trim().toLowerCase()) : (pur.productId ? db.products.find((p) => p.id === pur.productId) : null));
+  const matrixEntries = Object.entries(targetProd?.variantStock || selItem.variantStock || {});
+
   const modalRoot = document.getElementById("modalRoot");
   modalRoot.innerHTML = `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
@@ -6318,16 +6389,44 @@ function renderPurchaseReturnModalDom() {
         <div class="card" style="background:var(--bg);margin-bottom:10px;font-size:12.5px;">
           <b>${esc(pur.itemsSummary || pur.productName)}</b> · Supplier: <b>${esc(pur.supplier)}</b> · Bill: <b>${money(pur.totalAmount)}</b>
         </div>
+
+        ${effItems.length > 1 ? `
+          <div class="field">
+            <label>👗 Select Which Outfit / Dress Item to Return</label>
+            <select id="prItemIdx" onchange="onPurReturnItemChanged(this.value)">
+              ${effItems.map((it, idx) => `
+                <option value="${idx}" ${st.itemIdx === idx ? 'selected' : ''}>
+                  ${esc(it.productName || `Dress #${idx + 1}`)} ${it.sku ? `(#${esc(it.sku)})` : ''} — ${it.qty || 1} pcs (${money(it.unitCost)} / pc)
+                </option>
+              `).join("")}
+            </select>
+          </div>
+        ` : ""}
+
+        ${matrixEntries.length > 0 ? `
+          <div class="field">
+            <label>🎨 Specific Colour & Size Returned (optional)</label>
+            <select id="prVarKey" onchange="onPurReturnVariantChanged(this.value)">
+              <option value="" ${!st.variantKey ? 'selected' : ''}>General / Auto-deduct from stock</option>
+              ${matrixEntries.map(([vk, vq]) => {
+                const [col, sz] = vk.split("|");
+                return `<option value="${esc(vk)}" ${st.variantKey === vk ? 'selected' : ''}>${esc(col || "")} · ${esc(sz || "")} (${vq} in stock)</option>`;
+              }).join("")}
+            </select>
+          </div>
+        ` : ""}
+
         <div class="field-row">
           <div class="field">
-            <label>Returned Qty</label>
-            <input id="prQty" type="number" value="${st.qty}">
+            <label>Returned Quantity *</label>
+            <input id="prQty" type="number" min="1" value="${st.qty}">
           </div>
           <div class="field">
             <label>Return / Refund Value (₹) *</label>
             <input id="prAmt" type="number" inputmode="decimal" value="${st.returnAmount}">
           </div>
         </div>
+
         <div class="field">
           <label>💰 Cash Flow Option (Where does the supplier refund go?)</label>
           <select id="prCashMode" onchange="onPurReturnCashModeChange(this.value)">
@@ -6343,17 +6442,20 @@ function renderPurchaseReturnModalDom() {
             </div>
           ` : ""}
         </div>
-        ${pur.productId ? `
-          <div class="toggle-row">
-            <span>Deduct returned quantity from live outfit stock</span>
-            <input id="prDeduct" type="checkbox" style="width:20px;height:20px;" ${st.deductStock ? 'checked' : ''}>
+
+        <div class="toggle-row" style="margin:10px 0;background:var(--bg);padding:10px 12px;border-radius:12px;border:1px solid var(--line);">
+          <div>
+            <b>Deduct returned pieces from Live Outfit Stock & Catalogue</b>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">Automatically syncs and reduces available count in your live customer storefront</div>
           </div>
-        ` : ""}
+          <input id="prDeduct" type="checkbox" style="width:22px;height:22px;cursor:pointer;" ${st.deductStock ? 'checked' : ''}>
+        </div>
+
         <div class="field">
           <label>Return Reason / Note</label>
-          <input id="prReason" value="${esc(st.reason)}" placeholder="e.g. Damaged piece / wrong colour">
+          <input id="prReason" value="${esc(st.reason)}" placeholder="e.g. Damaged piece / wrong colour / defect">
         </div>
-        <button class="btn btn-primary" style="width:100%;" onclick="savePurchaseReturnFromModal()">✓ Record Purchase Return</button>
+        <button class="btn btn-primary" style="width:100%;padding:13px;" onclick="savePurchaseReturnFromModal()">✓ Record Purchase Return & Sync Stock</button>
       </div>
     </div>
   `;
@@ -6376,16 +6478,19 @@ window.onPurReturnCashModeChange = function(mode) {
   }
 };
 
-window.savePurchaseReturnFromModal = function() {
+window.savePurchaseReturnFromModal = async function() {
   if (!_purReturnState) return;
   const pur = (db.purchases || []).find((x) => x.id === _purReturnState.purId);
   if (!pur) return;
+  const effItems = getEffectivePurchaseItems(pur);
+  const selItem = effItems[_purReturnState.itemIdx] || effItems[0] || {};
   const qty = Math.max(1, Number(document.getElementById("prQty")?.value) || 1);
   const returnAmount = Math.max(0, Number(document.getElementById("prAmt")?.value) || 0);
   if (returnAmount <= 0) return showToast("Enter return amount");
   const mode = document.getElementById("prCashMode")?.value || _purReturnState.cashFlowMode;
   const deduct = Boolean(document.getElementById("prDeduct")?.checked);
   const reason = (document.getElementById("prReason")?.value || "").trim();
+  const variantKey = _purReturnState.variantKey || "";
   const now = Date.now();
 
   let vRef = 0, bRef = 0;
@@ -6394,6 +6499,47 @@ window.savePurchaseReturnFromModal = function() {
     bRef = _purReturnState.balkeesRefund || (returnAmount - vRef);
   } else if (mode === "cash_refund_vaheeda") vRef = returnAmount;
   else if (mode === "cash_refund_balkees") bRef = returnAmount;
+
+  // Deduct stock if requested
+  let targetProd = selItem.productId ? db.products.find((p) => p.id === selItem.productId) : null;
+  if (!targetProd && selItem.sku) {
+    targetProd = db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(selItem.sku).trim().toLowerCase());
+  }
+  if (!targetProd && pur.productId) {
+    targetProd = db.products.find((p) => p.id === pur.productId);
+  }
+
+  const deductedVariants = {};
+  if (deduct && targetProd) {
+    targetProd.variantStock = { ...(targetProd.variantStock || {}) };
+    if (variantKey && targetProd.variantStock[variantKey] !== undefined) {
+      const curQ = Number(targetProd.variantStock[variantKey]) || 0;
+      const take = Math.min(curQ, qty);
+      if (curQ - take > 0) targetProd.variantStock[variantKey] = curQ - take;
+      else delete targetProd.variantStock[variantKey];
+      deductedVariants[variantKey] = take;
+    } else if (Object.keys(targetProd.variantStock).length > 0) {
+      let rem = qty;
+      for (const [vk, curQ] of Object.entries(targetProd.variantStock)) {
+        if (rem <= 0) break;
+        const take = Math.min(Number(curQ) || 0, rem);
+        if (take > 0) {
+          const next = (Number(curQ) || 0) - take;
+          if (next > 0) targetProd.variantStock[vk] = next;
+          else delete targetProd.variantStock[vk];
+          deductedVariants[vk] = take;
+          rem -= take;
+        }
+      }
+    }
+    targetProd.qty = Object.keys(targetProd.variantStock).length > 0
+      ? Object.values(targetProd.variantStock).reduce((a, v) => a + (Number(v) || 0), 0)
+      : Math.max(0, (Number(targetProd.qty) || 0) - qty);
+
+    targetProd._u = now;
+    targetProd.updatedAt = nowIso();
+    outbox.add(`products/${targetProd.id}`);
+  }
 
   if (!Array.isArray(pur.returns)) pur.returns = [];
   pur.returns.push({
@@ -6405,27 +6551,68 @@ window.savePurchaseReturnFromModal = function() {
     cashFlowMode: mode,
     vaheedaRefund: vRef,
     balkeesRefund: bRef,
-    reason
+    reason,
+    productId: targetProd?.id || selItem.productId || "",
+    productName: targetProd?.name || selItem.productName || "",
+    sku: targetProd?.code || selItem.sku || "",
+    variantKey,
+    deductedVariants
   });
   pur._u = now;
-
-  if (deduct && pur.productId) {
-    const p = db.products.find((x) => x.id === pur.productId);
-    if (p) {
-      p.qty = Math.max(0, (Number(p.qty) || 0) - qty);
-      p._u = now;
-      outbox.add(`products/${p.id}`);
-    }
-  }
+  outbox.add(`purchases/${pur.id}`);
 
   _purReturnState = null;
   saveLocalDb();
-  outbox.add(`purchases/${pur.id}`);
   saveOutbox();
   closeModal();
   renderApp();
-  pushOutboxToFirebase();
-  showToast("Purchase return recorded ↩️");
+  await pushOutboxToFirebase();
+  showToast("Purchase return recorded & live stock updated ↩️");
+};
+
+window.undoPurchaseReturn = async function(purId, returnId) {
+  const pur = (db.purchases || []).find((x) => x.id === purId);
+  if (!pur || !Array.isArray(pur.returns)) return;
+  const retIdx = pur.returns.findIndex((r) => r.id === returnId);
+  if (retIdx < 0) return;
+  const ret = pur.returns[retIdx];
+  const now = Date.now();
+
+  // Restore deducted stock if return had deducted stock
+  if (ret.deductStock) {
+    let targetProd = ret.productId ? db.products.find((p) => p.id === ret.productId) : null;
+    if (!targetProd && ret.sku) {
+      targetProd = db.products.find((p) => String(p.code || "").trim().toLowerCase() === String(ret.sku).trim().toLowerCase());
+    }
+    if (!targetProd && pur.productId) {
+      targetProd = db.products.find((p) => p.id === pur.productId);
+    }
+    if (targetProd) {
+      targetProd.variantStock = { ...(targetProd.variantStock || {}) };
+      if (ret.deductedVariants && Object.keys(ret.deductedVariants).length > 0) {
+        for (const [vk, q] of Object.entries(ret.deductedVariants)) {
+          targetProd.variantStock[vk] = (Number(targetProd.variantStock[vk]) || 0) + (Number(q) || 0);
+        }
+      } else if (ret.variantKey) {
+        targetProd.variantStock[ret.variantKey] = (Number(targetProd.variantStock[ret.variantKey]) || 0) + (Number(ret.qty) || 0);
+      }
+      targetProd.qty = Object.keys(targetProd.variantStock).length > 0
+        ? Object.values(targetProd.variantStock).reduce((a, v) => a + (Number(v) || 0), 0)
+        : ((Number(targetProd.qty) || 0) + (Number(ret.qty) || 0));
+      targetProd._u = now;
+      targetProd.updatedAt = nowIso();
+      outbox.add(`products/${targetProd.id}`);
+    }
+  }
+
+  pur.returns.splice(retIdx, 1);
+  pur._u = now;
+  outbox.add(`purchases/${pur.id}`);
+  saveLocalDb();
+  saveOutbox();
+  renderApp();
+  await pushOutboxToFirebase();
+  showToast("Purchase return undone & stock restored ↩️✓");
 };
 
 // ---- Record Sale Modal (with Customer WhatsApp Number & Who Got Payment + Split Popup) ----
