@@ -339,6 +339,31 @@ details.set-block[open] > summary::after { transform: rotate(180deg); }
 }
 .swatch-dot.active { border: 3px solid var(--ink); transform: scale(1.08); }
 
+/* Catalogue Help Banner: Responsive row (2 cols on mobile, 3 cols on desktop) */
+.desktop-help-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.desktop-help-row .ig-help-btn {
+  grid-column: 1 / -1;
+}
+@media (max-width: 440px) {
+  .desktop-help-row {
+    grid-template-columns: 1fr;
+  }
+}
+@media (min-width: 768px) {
+  .desktop-help-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 10px !important;
+  }
+  .desktop-help-row .ig-help-btn {
+    grid-column: auto !important;
+  }
+}
+
 /* Desktop Orientation Layout Enhancements (Preserves 100% of mobile layout for screens < 840px) */
 @media (min-width: 840px) {
   .app-shell {
@@ -429,6 +454,9 @@ details.set-block[open] > summary::after { transform: rotate(180deg); }
     display: grid !important;
     grid-template-columns: 1fr 1fr 1fr !important;
     gap: 10px !important;
+  }
+  .desktop-help-row .ig-help-btn {
+    grid-column: auto !important;
   }
 }
 </style>
@@ -1072,16 +1100,14 @@ function renderCatalogueHelpBannerHtml() {
       <div style="font-size:12.5px;font-weight:800;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
         <span style="display:flex;align-items:center;gap:6px;">${whatsappLogoSvg(18)} <span>Need Any Help? Contact Sisters on WhatsApp or Instagram:</span></span>
       </div>
-      <div style="display:flex;flex-direction:column;gap:7px;">
-        <div class="desktop-help-row" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;">
-            ${whatsappLogoSvg(18)} <span>WhatsApp Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
-          </a>
-          <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;">
-            ${whatsappLogoSvg(18)} <span>WhatsApp Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
-          </a>
-        </div>
-        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;">
+      <div class="desktop-help-row">
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.vaheeda.digits}?text=${vHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;">
+          ${whatsappLogoSvg(18)} <span>WhatsApp Vaheeda: ${SISTER_WHATSAPP_HELP.vaheeda.display}</span>
+        </a>
+        <a href="https://wa.me/${SISTER_WHATSAPP_HELP.balkees.digits}?text=${bHelpMsg}" target="_blank" class="btn btn-soft btn-sm" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(37,211,102,0.45);background:rgba(37,211,102,0.1);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;">
+          ${whatsappLogoSvg(18)} <span>WhatsApp Balkees: ${SISTER_WHATSAPP_HELP.balkees.display}</span>
+        </a>
+        <a href="${SISORA_INSTAGRAM_URL}" target="_blank" class="btn btn-soft btn-sm ig-help-btn" style="text-decoration:none;padding:9px 12px;border:1.5px solid rgba(220,39,67,0.4);background:rgba(220,39,67,0.08);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;">
           ${instagramLogoSvg(18)} <span>Instagram: @sisora.business</span>
         </a>
       </div>
