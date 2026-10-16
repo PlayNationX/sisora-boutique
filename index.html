@@ -560,6 +560,20 @@ details.set-block[open] > summary::after { transform: rotate(180deg); }
 .cat-card:hover .cat-card-img-box img {
   transform: scale(1.04);
 }
+.cat-card-img-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(90deg, #fbf7f9 0%, #f4e8ee 50%, #fbf7f9 100%);
+  background-size: 200% 100%;
+  animation: shimmerPulse 1.8s infinite ease-in-out;
+}
+@keyframes shimmerPulse {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
 .cat-card-badge-top-left {
   position: absolute;
   top: 8px;
@@ -1543,7 +1557,7 @@ function getOrderedPhotosForProductColor(p, selectedColor, idToUrlObj) {
   const matchedUrls = [];
   const otherUrls = [];
   for (const id of ids) {
-    const url = idToUrlObj ? idToUrlObj[id] : (imgMap.get(id)?.data || "");
+    const url = (idToUrlObj && idToUrlObj[id]) || (imgMap.get(id)?.data || "");
     if (!url) continue;
     const tag = String(colorMap[id] || "").trim().toLowerCase();
     if (targetColor && tag && tag === targetColor) {
@@ -1603,7 +1617,7 @@ function addToCatCart(productId, color, size, qty) {
   const existingIdx = catCart.findIndex((x) => x.cartId === cartId);
   const byId = catPhotosByIdMap[productId] || {};
   const photos = Object.keys(byId).length ? getOrderedPhotosForProductColor(p, cleanColor, byId) : (catPhotosMap[productId] || []);
-  const coverUrl = photos[0] || (Array.isArray(p.photoIds) && p.photoIds.length ? (byId[p.photoIds[0]] || "") : "");
+  const coverUrl = photos[0] || (Array.isArray(p.photoIds) && p.photoIds.length ? (byId[p.photoIds[0]] || imgMap.get(p.photoIds[0])?.data || "") : (imgMap.get(p.id)?.data || ""));
 
   if (existingIdx >= 0) {
     const nextQty = Math.min(maxVarQty, (Number(catCart[existingIdx].qty) || 1) + addQty);
@@ -1734,6 +1748,30 @@ window.openProductDetailModal = function(prodId) {
   _activeCatModalQty = 1;
   _activeCatModalPhotoIdx = 0;
   renderProductDetailModalDom();
+
+  // High-priority on-demand fetch for any missing photos of this outfit
+  const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
+  const byId = catPhotosByIdMap[p.id] || {};
+  const missing = ids.filter((imgId) => !byId[imgId] && !imgMap.get(imgId)?.data);
+  if (missing.length > 0) {
+    const shopId = FIREBASE_CFG.shopId;
+    Promise.all(missing.map(async (imgId) => {
+      try {
+        const im = await fbGet(`shops/${shopId}/data/images/${imgId}`);
+        if (im && im.data) {
+          putLocalImage(imgId, im.data, im.at || Date.now(), true).catch(() => {});
+          if (!catPhotosByIdMap[p.id]) catPhotosByIdMap[p.id] = {};
+          catPhotosByIdMap[p.id][imgId] = im.data;
+          if (!catPhotosMap[p.id]) catPhotosMap[p.id] = [];
+          if (!catPhotosMap[p.id].includes(im.data)) catPhotosMap[p.id].push(im.data);
+        }
+      } catch (e) {}
+    })).then(() => {
+      if (_activeCatModalProd && _activeCatModalProd.id === prodId) {
+        renderProductDetailModalDom();
+      }
+    });
+  }
 };
 
 window.setCatModalColor = function(color) {
@@ -1798,7 +1836,7 @@ function renderProductDetailModalDom() {
   const photos = Object.keys(byId).length
     ? getOrderedPhotosForProductColor(p, _activeCatModalColor, byId)
     : (catPhotosMap[p.id] || []);
-  const coverUrl = photos[_activeCatModalPhotoIdx] || photos[0] || (Array.isArray(p.photoIds) && p.photoIds.length ? (byId[p.photoIds[0]] || "") : "");
+  const coverUrl = photos[_activeCatModalPhotoIdx] || photos[0] || (Array.isArray(p.photoIds) && p.photoIds.length ? (byId[p.photoIds[0]] || imgMap.get(p.photoIds[0])?.data || "") : (imgMap.get(p.id)?.data || ""));
   const sizes = parseSizesList(p);
   const colors = parseColorsList(p);
   const comboQty = Math.max(0, getVariantQty(p, _activeCatModalColor, _activeCatModalSize));
@@ -2031,6 +2069,71 @@ window.openCustomerCartModal = function() {
 };
 
 // ============================================================================
+// LIVE CUSTOMER CATALOGUE OPTIMIZED LOADER & CONCURRENCY CONTROLLER
+// ============================================================================
+async function runWithConcurrency(items, limit, fn) {
+  const executing = new Set();
+  const results = [];
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    results.push(p);
+    executing.add(p);
+    const clean = () => executing.delete(p);
+    p.then(clean, clean);
+    if (executing.size >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  return Promise.all(results);
+}
+
+function updateCatCardCoverDom(prodId, dataUrl, prodName) {
+  const imgEl = document.getElementById(`catCardImg_${prodId}`);
+  if (imgEl) {
+    imgEl.src = dataUrl;
+    return;
+  }
+  const box = document.getElementById(`catCardBox_${prodId}`);
+  const placeholder = document.getElementById(`catCardPlaceholder_${prodId}`);
+  if (box && placeholder) {
+    const newImg = document.createElement("img");
+    newImg.id = `catCardImg_${prodId}`;
+    newImg.src = dataUrl;
+    newImg.alt = prodName || "Outfit";
+    newImg.loading = "lazy";
+    placeholder.replaceWith(newImg);
+  }
+}
+
+function loadMissingSecondaryPhotosInBackground() {
+  const shopId = FIREBASE_CFG.shopId;
+  const missingSecondary = [];
+  for (const p of catProducts) {
+    const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : [];
+    if (ids.length <= 1) continue;
+    const byId = catPhotosByIdMap[p.id] || {};
+    for (const imgId of ids.slice(1)) {
+      if (!byId[imgId] && !imgMap.get(imgId)?.data) {
+        missingSecondary.push({ p, imgId });
+      }
+    }
+  }
+  if (!missingSecondary.length) return;
+  runWithConcurrency(missingSecondary, 3, async ({ p, imgId }) => {
+    try {
+      const im = await fbGet(`shops/${shopId}/data/images/${imgId}`);
+      if (im && im.data) {
+        putLocalImage(imgId, im.data, im.at || Date.now(), true).catch(() => {});
+        if (!catPhotosByIdMap[p.id]) catPhotosByIdMap[p.id] = {};
+        catPhotosByIdMap[p.id][imgId] = im.data;
+        if (!catPhotosMap[p.id]) catPhotosMap[p.id] = [];
+        if (!catPhotosMap[p.id].includes(im.data)) catPhotosMap[p.id].push(im.data);
+      }
+    } catch (e) {}
+  });
+}
+
+// ============================================================================
 // LIVE CUSTOMER CATALOGUE MAIN SCREEN
 // ============================================================================
 async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
@@ -2097,49 +2200,84 @@ async function renderCustomerLiveCatalogueMode(preselectProdId = null) {
     inStockList.sort((a, b) => (Number(b._u) || 0) - (Number(a._u) || 0));
     catProducts = inStockList;
 
+    // 1. Immediately seed all images already cached in local IndexedDB into memory (0ms instant!)
+    for (const p of catProducts) {
+      const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
+      const urls = [];
+      const byId = {};
+      for (const imgId of ids) {
+        const cached = imgMap.get(imgId);
+        if (cached && cached.data) {
+          urls.push(cached.data);
+          byId[imgId] = cached.data;
+        }
+      }
+      if (urls.length) {
+        catPhotosMap[p.id] = urls;
+        catPhotosByIdMap[p.id] = byId;
+      }
+    }
+
+    if (catShopSettings.logoAt) {
+      const cachedLogo = imgMap.get("logo")?.data;
+      if (cachedLogo) {
+        catShopSettings._logoData = cachedLogo;
+      } else {
+        fbGet(`shops/${shopId}/data/images/logo`).then((im) => {
+          if (im && im.data) {
+            catShopSettings._logoData = im.data;
+            putLocalImage("logo", im.data, im.at || Date.now(), true).catch(() => {});
+            const logoEl = document.querySelector(".cat-header-logo");
+            if (logoEl) logoEl.src = im.data;
+          }
+        }).catch(() => {});
+      }
+    }
+
+    // Render the storefront UI instantly (cards show cached photos or smooth shimmer placeholders)
+    renderLiveCatalogueDom();
+
     if (preselectProdId) {
       setTimeout(() => {
         window.openProductDetailModal(preselectProdId);
       }, 150);
     }
 
-    if (catShopSettings.logoAt) {
-      fbGet(`shops/${shopId}/data/images/logo`).then((im) => {
-        if (im && im.data) {
-          catShopSettings._logoData = im.data;
-          renderLiveCatalogueDom();
-        }
-      }).catch(() => {});
+    // 2. Fetch missing COVER photos with concurrency pool (Limit 6 parallel requests)
+    const missingCovers = [];
+    for (const p of catProducts) {
+      const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
+      if (!ids.length) continue;
+      const coverId = ids[0];
+      if (!catPhotosByIdMap[p.id] || !catPhotosByIdMap[p.id][coverId]) {
+        missingCovers.push({ p, coverId });
+      }
     }
 
-    renderLiveCatalogueDom();
-
-    // Load product photos and videos progressively in parallel
-    await Promise.all(
-      catProducts.map(async (p) => {
-        const ids = Array.isArray(p.photoIds) && p.photoIds.length ? p.photoIds : (p.imgAt ? [p.id] : []);
-        const urls = [];
-        const byId = {};
-        for (const imgId of ids) {
-          const im = await fbGet(`shops/${shopId}/data/images/${imgId}`);
+    if (missingCovers.length > 0) {
+      runWithConcurrency(missingCovers, 6, async ({ p, coverId }) => {
+        try {
+          const im = await fbGet(`shops/${shopId}/data/images/${coverId}`);
           if (im && im.data) {
-            urls.push(im.data);
-            byId[imgId] = im.data;
+            putLocalImage(coverId, im.data, im.at || Date.now(), true).catch(() => {});
+            if (!catPhotosByIdMap[p.id]) catPhotosByIdMap[p.id] = {};
+            catPhotosByIdMap[p.id][coverId] = im.data;
+            if (!catPhotosMap[p.id]) catPhotosMap[p.id] = [];
+            if (!catPhotosMap[p.id].includes(im.data)) catPhotosMap[p.id].unshift(im.data);
+            updateCatCardCoverDom(p.id, im.data, p.name);
           }
-        }
-        if (urls.length) {
-          catPhotosMap[p.id] = urls;
-          catPhotosByIdMap[p.id] = byId;
-        }
-        if (p.videoId) {
-          const vIm = await fbGet(`shops/${shopId}/data/images/${p.videoId}`).catch(() => null);
-          if (vIm && vIm.data) {
-            catVideosMap[p.id] = vIm.data;
-          }
-        }
-        renderLiveCatalogueDom();
-      })
-    );
+        } catch (e) {}
+      }).then(() => {
+        // Once cover photos have arrived, schedule secondary photo background loading
+        setTimeout(() => {
+          loadMissingSecondaryPhotosInBackground();
+        }, 1200);
+      });
+    } else {
+      setTimeout(() => {
+        loadMissingSecondaryPhotosInBackground();
+      }, 500);
+    }
   } catch (err) {
     root.innerHTML = `
       <div class="auth-screen" style="text-align:center;">
@@ -2233,7 +2371,8 @@ function renderLiveCatalogueDom() {
               const photos = Object.keys(byId).length
                 ? getOrderedPhotosForProductColor(p, defaultColor, byId)
                 : (catPhotosMap[p.id] || []);
-              const coverUrl = photos[0] || (Array.isArray(p.photoIds) && p.photoIds.length ? (byId[p.photoIds[0]] || "") : "");
+              const coverId = (Array.isArray(p.photoIds) && p.photoIds.length) ? p.photoIds[0] : (p.imgAt ? p.id : "");
+              const coverUrl = photos[0] || (coverId ? (byId[coverId] || imgMap.get(coverId)?.data || "") : (imgMap.get(p.id)?.data || ""));
               const totalStock = Number(p.qty) || 0;
               const colorList = parseColorsList(p);
               const sizeList = parseSizesList(p);
@@ -2241,8 +2380,8 @@ function renderLiveCatalogueDom() {
 
               return `
                 <div class="cat-card" onclick="window.openProductDetailModal('${p.id}')">
-                  <div class="cat-card-img-box">
-                    ${coverUrl ? `<img src="${coverUrl}" alt="${esc(p.name)}" loading="lazy">` : `<div style="font-size:48px;">👗</div>`}
+                  <div class="cat-card-img-box" id="catCardBox_${p.id}">
+                    ${coverUrl ? `<img id="catCardImg_${p.id}" src="${coverUrl}" alt="${esc(p.name)}" loading="lazy">` : `<div id="catCardPlaceholder_${p.id}" class="cat-card-img-placeholder" style="font-size:44px;">👗</div>`}
 
                     <!-- Badges on Image -->
                     <div class="cat-card-badge-top-left">
@@ -2322,13 +2461,42 @@ window.openCatProductGallery = (prodId, startIdx = 0) => {
   openLightbox(urls, startIdx);
 };
 
-window.openCatProductVideo = (prodId) => {
+window.openCatProductVideo = async (prodId) => {
   const p = catProducts.find((x) => x.id === prodId) || db.products.find((x) => x.id === prodId);
   if (!p) return;
-  const vData = catVideosMap[prodId] || imgMap.get(p.videoId)?.data || "";
+  let vData = catVideosMap[prodId] || imgMap.get(p.videoId)?.data || "";
   const vUrl = p.videoUrl || "";
   const isIg = vUrl.includes("instagram.com");
   const modalRoot = document.getElementById("modalRoot");
+
+  // If uploaded video file exists but is not yet fetched, fetch it on-demand!
+  if (!vData && p.videoId && !vUrl) {
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" style="align-items:center;padding:16px;" onclick="if(event.target===this)closeModal()">
+        <div class="modal-sheet" style="max-width:540px;text-align:center;padding:28px 20px;">
+          <div class="modal-head" style="margin-bottom:16px;">
+            <h3 style="display:flex;align-items:center;gap:6px;">🎬 ${esc(p.name)}</h3>
+            <button onclick="closeModal()" style="font-size:20px;">✕</button>
+          </div>
+          <div style="padding:28px 16px;">
+            <div style="font-size:36px;margin-bottom:12px;">⏳</div>
+            <h4 style="margin:0 0 6px;">Loading Video Reel…</h4>
+            <p style="color:var(--muted);font-size:13px;margin:0;">Fetching video from SISORA cloud…</p>
+          </div>
+        </div>
+      </div>
+    `;
+    try {
+      const shopId = FIREBASE_CFG.shopId;
+      const vIm = await fbGet(`shops/${shopId}/data/images/${p.videoId}`).catch(() => null);
+      if (vIm && vIm.data) {
+        vData = vIm.data;
+        catVideosMap[prodId] = vData;
+        putLocalImage(p.videoId, vData, vIm.at || Date.now(), true).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
   modalRoot.innerHTML = `
     <div class="modal-backdrop" style="align-items:center;padding:16px;" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet" style="max-width:540px;text-align:center;padding:20px;">
@@ -2818,10 +2986,17 @@ async function renderCustomerShareMode(shareId) {
     const photos = [];
     const byId = {};
     for (const pid of photoIds) {
-      const im = await fbGet(`shops/${shopId}/data/images/${pid}`);
-      if (im && im.data) {
-        photos.push(im.data);
-        byId[pid] = im.data;
+      let data = imgMap.get(pid)?.data;
+      if (!data) {
+        const im = await fbGet(`shops/${shopId}/data/images/${pid}`).catch(() => null);
+        if (im && im.data) {
+          data = im.data;
+          putLocalImage(pid, data, im.at || Date.now(), true).catch(() => {});
+        }
+      }
+      if (data) {
+        photos.push(data);
+        byId[pid] = data;
       }
     }
 
@@ -8117,6 +8292,7 @@ window.saveExpenseFromModal = function() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   }
+  await loadAllImagesFromIdb();
   const params = new URLSearchParams(window.location.search);
   const catalogueParam = params.get("catalogue");
   if (catalogueParam) {
@@ -8128,7 +8304,6 @@ window.saveExpenseFromModal = function() {
     await renderCustomerShareMode(shareItem);
     return;
   }
-  await loadAllImagesFromIdb();
   renderApp();
   await pullFromFirebase();
   setInterval(() => {
